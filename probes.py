@@ -19,7 +19,10 @@ def train_eval_probe(features: np.ndarray, labels: np.ndarray, seed: int = 42):
     )
 
     # PCA keeps the probe compact and mitigates collinearity before LR.
-    pca_dim = min(features.shape[1], 128)
+    max_components = min(features.shape[1], 128, X_train.shape[0])
+    if max_components < 1:
+        return None
+    pca_dim = max_components
     pca = PCA(n_components=pca_dim, random_state=seed)
     X_train_pca = pca.fit_transform(X_train)
     X_test_pca = pca.transform(X_test)
