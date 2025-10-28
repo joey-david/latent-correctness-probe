@@ -1,0 +1,25 @@
+import json
+import math
+import random
+import re
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
+import torch
+import torch.nn as nn
+from sklearn.decomposition import PCA
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.model_selection import train_test_split
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# Central experiment configuration shared across modules.
+CHECKPOINT_STEPS = [1, 2, 4, 8, 16, 32, 64, 128]
+MAX_PREFIX_TOKENS = 192  # do not analyse reasoning prefixes longer than this
+MAX_NEW_TOKENS = 256  # max chain-of-thought continuation length to decode
+DEVICE = "cuda"  # assume a single CUDA device is available
+SEED = 42
+
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
