@@ -61,7 +61,7 @@ def parse_args():
     parser.add_argument(
         "--max-items",
         type=int,
-        default=400,
+        default=800,
         help="Maximum number of dataset items to process",
     )
     return parser.parse_args()

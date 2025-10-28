@@ -35,6 +35,7 @@ def train_eval_probe(features: np.ndarray, labels: np.ndarray, seed: int = 42):
         C=1.0,
         solver="liblinear",
         max_iter=1000,
+        class_weight="balanced",
         random_state=seed,
     )
     clf.fit(X_train_pca, y_train)

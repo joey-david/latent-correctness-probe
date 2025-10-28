@@ -47,9 +47,20 @@ def get_prefix_hidden_states(
             output_hidden_states=True,
             use_cache=False,
         )
-        hidden_state = outputs.hidden_states[-1][:, -1, :].squeeze(0).detach()
+
+        layer_hidden = outputs.hidden_states[-1].squeeze(0).detach()
+        seq_len = layer_hidden.shape[0]
+        reasoning_len = min(reasoning_slice.shape[-1], seq_len)
+        if reasoning_len == 0:
+            pooled_hidden = layer_hidden[-1]
+        else:
+            pool_width = min(4, reasoning_len)
+            reason_end = seq_len
+            reason_start = seq_len - reasoning_len
+            start_idx = max(reason_start, reason_end - pool_width)
+            pooled_hidden = layer_hidden[start_idx:reason_end].mean(dim=0)
         # Numpy cannot represent bfloat16 tensors, so cast to float32 before moving to CPU.
-        hidden_state = hidden_state.to(torch.float32).cpu().numpy()
+        hidden_state = pooled_hidden.to(torch.float32).cpu().numpy()
 
         prefix_text = tokenizer.decode(reasoning_slice, skip_special_tokens=True)
         think_closed = "</think>" in prefix_text
