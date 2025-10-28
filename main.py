@@ -23,7 +23,7 @@ def load_model(model_id: str):
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
-        torch_dtype="auto",
+        dtype="auto",
         device_map="auto",
         trust_remote_code=True,
     )
@@ -56,7 +56,7 @@ def load_math_data(
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--model-id", default="Qwen/Qwen3-8B-Instruct", help="HF model identifier"
+        "--model-id", default="Qwen/Qwen3-8B", help="HF model identifier"
     )
     parser.add_argument(
         "--max-items",
