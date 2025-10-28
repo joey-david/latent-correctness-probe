@@ -14,7 +14,7 @@ from sklearn.model_selection import train_test_split
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Central experiment configuration shared across modules.
-CHECKPOINT_STEPS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
+CHECKPOINT_STEPS = [4, 8, 16, 32, 64, 128, 192, 256, 384, 512]
 MAX_PREFIX_TOKENS = 1024  # allow analysing longer reasoning prefixes when needed
 MAX_NEW_TOKENS = 512  # limit chain-of-thought length before forcing a conclusion
 DEVICE = "cuda"
