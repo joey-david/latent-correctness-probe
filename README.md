@@ -40,7 +40,7 @@ This utility concatenates all seven subjects (`algebra`, `counting_and_probabili
 
 `main.py` defaults to:
 
-- Qwen: `Qwen/Qwen2.5-7B-Instruct`
+- Qwen: `Qwen/Qwen3-8B`
 - Mistral: `mistralai/Mistral-7B-Instruct-v0.3`
 
 Edit `qwen_id` / `other_id` in `main.py` to change them. Models are loaded with `torch_dtype=torch.float16` and `device_map="auto"`, so you need a GPU configuration that Hugging Face Accelerate can target automatically.

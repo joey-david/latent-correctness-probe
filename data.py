@@ -139,15 +139,11 @@ def load_math_split(
 
     examples: List[Dict[str, Any]] = []
     for subject in subjects:
-        dataset = load_dataset(
-            "EleutherAI/hendrycks_math", name=subject, split=split, trust_remote_code=True
-        )
+        dataset = load_dataset("EleutherAI/hendrycks_math", name=subject, split=split)
         for row in dataset:
             level_str = str(row["level"]).strip()
-            try:
-                level = int(level_str)
-            except ValueError:
-                level = 0
+            match = re.search(r"\d+", level_str)
+            level = int(match.group(0)) if match else 0
             if level < min_level:
                 continue
 
