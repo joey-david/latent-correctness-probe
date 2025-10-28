@@ -11,7 +11,10 @@ def train_eval_probe(features: np.ndarray, labels: np.ndarray, seed: int = 42):
     """
     Fit a simple linear probe (PCA -> logistic regression) and report metrics.
     """
-    if len(np.unique(labels)) < 2:
+    unique_labels, counts = np.unique(labels, return_counts=True)
+    if len(unique_labels) < 2:
+        return None
+    if np.min(counts) < 2:
         return None
 
     X_train, X_test, y_train, y_test = train_test_split(
