@@ -82,6 +82,44 @@ def generate_cot(
         answer_text = post.strip()
 
     parsed = parse_model_answer(answer_text)
+    reached_limit = gen_ids.shape[0] >= max_new_tokens
+    forced_completion = False
+
+    if parsed["raw"] is None or reached_limit:
+        forced_completion = True
+
+        forced_suffix_ids = tokenizer(
+            FORCED_SUFFIX_TEXT,
+            return_tensors="pt",
+            add_special_tokens=False,
+        ).input_ids[0].to(model.device)
+
+        base_input_ids = torch.cat(
+            [enc["input_ids"][0], gen_ids, forced_suffix_ids], dim=-1
+        )
+        continuation = model.generate(
+            input_ids=base_input_ids.unsqueeze(0),
+            attention_mask=torch.ones_like(base_input_ids).unsqueeze(0),
+            max_new_tokens=FORCED_SUFFIX_EXTRA_TOKENS,
+            do_sample=False,
+            temperature=0.0,
+            pad_token_id=tokenizer.eos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+        continuation_ids = continuation[0][base_input_ids.shape[0]:]
+
+        gen_ids = torch.cat([gen_ids, forced_suffix_ids, continuation_ids], dim=0)
+        gen_text = tokenizer.decode(gen_ids, skip_special_tokens=True)
+
+        if _is_qwen3(tokenizer) and "</think>" in gen_text:
+            pre, post = gen_text.split("</think>", 1)
+            think_text = pre.replace("<think>", "").strip()
+            answer_text = post.strip()
+        else:
+            think_text = None
+            answer_text = gen_text
+
+        parsed = parse_model_answer(answer_text)
 
     return {
         "prompt_text": prompt,
@@ -91,4 +129,7 @@ def generate_cot(
         "model_ans_raw": parsed["raw"],
         "model_ans_norm": parsed["norm"],
         "gen_token_ids": gen_ids.detach().cpu(),
+        "forced_completion": forced_completion,
     }
+FORCED_SUFFIX_TEXT = "...\n Thus the final answer should be \\boxed{"
+FORCED_SUFFIX_EXTRA_TOKENS = 12

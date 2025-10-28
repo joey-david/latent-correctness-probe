@@ -16,7 +16,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # Central experiment configuration shared across modules.
 CHECKPOINT_STEPS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
 MAX_PREFIX_TOKENS = 1024  # allow analysing longer reasoning prefixes when needed
-MAX_NEW_TOKENS = 1024  # generous cap so generations can reach final answers
+MAX_NEW_TOKENS = 512  # limit chain-of-thought length before forcing a conclusion
 DEVICE = "cuda"
 SEED = 356
 

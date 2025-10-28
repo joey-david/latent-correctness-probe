@@ -20,7 +20,7 @@ MATH_SUBJECTS = [
     "precalculus",
 ]
 
-BOX_RE = re.compile(r"\\boxed\\{([^}]*)\\}")
+BOX_TRIGGER_RE = re.compile(r"\\?boxed\s*\{", re.IGNORECASE)
 NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
 FRAC_RE = re.compile(r"\\frac\{([^}]*)\}\{([^}]*)\}")
 
@@ -50,12 +50,25 @@ def _latex_to_simple(text: str) -> str:
 
 def extract_boxed(solution: str) -> Optional[str]:
     """
-    Return the final \\boxed{...} group from a MATH solution if present.
+    Return the final boxed{...} group from a solution if present. This is intentionally
+    permissive: the backslash before "boxed" is optional and the substring extends until
+    the next closing brace, or the end of the string if none is found.
     """
-    matches = BOX_RE.findall(solution)
+    if not solution:
+        return None
+    matches: List[str] = []
+    for match in BOX_TRIGGER_RE.finditer(solution):
+        start_idx = match.end()
+        close_idx = solution.find("}", start_idx)
+        if close_idx == -1:
+            content = solution[start_idx:].strip()
+        else:
+            content = solution[start_idx:close_idx].strip()
+        if content:
+            matches.append(content)
     if not matches:
         return None
-    return matches[-1].strip()
+    return matches[-1]
 
 
 def normalize_gold_answer(solution: str) -> Dict[str, Optional[str]]:
