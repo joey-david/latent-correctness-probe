@@ -26,7 +26,6 @@ def build_prompt(question: str, tokenizer: AutoTokenizer) -> str:
             {
                 "role": "system",
                 "content": (
-                    "You are a careful competition math solver. "
                     "Think step by step inside <think>...</think> before responding. "
                     "After thinking, output the final numeric answer only inside \\boxed{...}."
                 ),
@@ -88,8 +87,15 @@ def generate_cot(
     if parsed["raw"] is None or reached_limit:
         forced_completion = True
 
+        needs_think_close = "<think>" in gen_text and "</think>" not in gen_text
+        forced_suffix_parts = []
+        if needs_think_close:
+            forced_suffix_parts.append("</think>")
+        forced_suffix_parts.append(FORCED_SUFFIX_SUFFIX)
+        forced_suffix = "".join(forced_suffix_parts)
+
         forced_suffix_ids = tokenizer(
-            FORCED_SUFFIX_TEXT,
+            forced_suffix,
             return_tensors="pt",
             add_special_tokens=False,
         ).input_ids[0].to(model.device)
@@ -131,5 +137,5 @@ def generate_cot(
         "gen_token_ids": gen_ids.detach().cpu(),
         "forced_completion": forced_completion,
     }
-FORCED_SUFFIX_TEXT = "...\n Thus the final answer should be \\boxed{"
-FORCED_SUFFIX_EXTRA_TOKENS = 12
+FORCED_SUFFIX_SUFFIX = "\nThus the final numeric answer is is \\boxed{"
+FORCED_SUFFIX_EXTRA_TOKENS = 32
