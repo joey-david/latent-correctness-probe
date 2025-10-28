@@ -1,7 +1,7 @@
+import argparse
 import json
 from typing import List
 
-import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from collect_dataset import build_probe_data
@@ -14,13 +14,17 @@ def load_model(model_id: str):
     """
     Load a reasoning model with FP16 weights and automatic device placement.
     """
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_id,
+        trust_remote_code=True,
+    )
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
-        torch_dtype=torch.float16,
+        torch_dtype="auto",
         device_map="auto",
+        trust_remote_code=True,
     )
     return model, tokenizer
 
@@ -46,7 +50,23 @@ def load_math_data(
     )
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--model-id", default="Qwen/Qwen3-8B-Instruct", help="HF model identifier"
+    )
+    parser.add_argument(
+        "--max-items",
+        type=int,
+        default=400,
+        help="Maximum number of dataset items to process",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     subjects = list(MATH_SUBJECTS)
     min_level = 1  # raise to 3 or higher if you only want harder problems
     require_numeric = True  # drop examples whose gold answer cannot be normalised
@@ -58,37 +78,22 @@ def main():
         require_numeric=require_numeric,
     )
 
-    qwen_id = "Qwen/Qwen2.5-7B-Instruct"
-    other_id = "mistralai/Mistral-7B-Instruct-v0.3"
-    max_items = 400  # per model; increase if you have compute budget
+    model_id = args.model_id
+    tag = model_id.split("/")[-1]
 
-    print("Loading Qwen model...")
-    qwen_model, qwen_tokenizer = load_model(qwen_id)
-    print("Collecting hidden states for Qwen...")
-    q_features_by_t, q_labels_by_t, _ = build_probe_data(
-        qwen_model, qwen_tokenizer, math_train, max_items=max_items
+    print(f"Loading model '{model_id}'...")
+    model, tokenizer = load_model(model_id)
+    print("Collecting hidden states...")
+    features_by_t, labels_by_t, _ = build_probe_data(
+        model, tokenizer, math_train, max_items=args.max_items
     )
-    q_results = run_all_probes(q_features_by_t, q_labels_by_t)
+    probe_results = run_all_probes(features_by_t, labels_by_t)
     plot_probe_results(
-        q_results,
-        title="Qwen correctness probe vs prefix length",
-        outpath="qwen_curve.png",
+        probe_results,
+        title=f"{tag} correctness probe vs prefix length",
+        outpath=f"{tag}_curve.png",
     )
-    pretty_print_results("Qwen", q_results)
-
-    print("Loading secondary model...")
-    other_model, other_tokenizer = load_model(other_id)
-    print("Collecting hidden states for secondary model...")
-    other_features_by_t, other_labels_by_t, _ = build_probe_data(
-        other_model, other_tokenizer, math_train, max_items=max_items
-    )
-    other_results = run_all_probes(other_features_by_t, other_labels_by_t)
-    plot_probe_results(
-        other_results,
-        title="Other model correctness probe vs prefix length",
-        outpath="other_curve.png",
-    )
-    pretty_print_results("Other", other_results)
+    pretty_print_results(tag, probe_results)
 
 
 if __name__ == "__main__":

@@ -49,6 +49,8 @@ def build_probe_data(
                 "model_final_answer": cot_info["model_ans_raw"],
                 "gold_answer": ex.get("gold_answer_raw"),
                 "is_correct": label,
+                "think_text": cot_info.get("think_text"),
+                "answer_text": cot_info.get("answer_text"),
                 "prefix_states": prefix_states,
             }
         )

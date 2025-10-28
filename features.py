@@ -50,8 +50,9 @@ def get_prefix_hidden_states(
         hidden_state = outputs.hidden_states[-1][:, -1, :].squeeze(0).detach().cpu().numpy()
 
         prefix_text = tokenizer.decode(reasoning_slice, skip_special_tokens=True)
-        leaky = contains_answer(prefix_text, leak_answer_str)
+        think_closed = "</think>" in prefix_text
+        leaky = contains_answer(prefix_text, leak_answer_str) or think_closed
 
-        results[t] = {"h_t": hidden_state, "leaky": leaky}
+        results[t] = {"h_t": hidden_state, "leaky": leaky, "has_think_close": think_closed}
 
     return results

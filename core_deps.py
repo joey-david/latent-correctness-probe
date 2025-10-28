@@ -15,10 +15,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Central experiment configuration shared across modules.
 CHECKPOINT_STEPS = [1, 2, 4, 8, 16, 32, 64, 128]
-MAX_PREFIX_TOKENS = 192  # do not analyse reasoning prefixes longer than this
+MAX_PREFIX_TOKENS = 512  # do not analyse reasoning prefixes longer than this
 MAX_NEW_TOKENS = 256  # max chain-of-thought continuation length to decode
-DEVICE = "cuda"  # assume a single CUDA device is available
-SEED = 42
+DEVICE = "cuda"
+SEED = 356
 
 random.seed(SEED)
 np.random.seed(SEED)
