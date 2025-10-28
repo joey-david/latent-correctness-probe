@@ -2,6 +2,7 @@ import argparse
 import json
 from typing import List
 
+from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from collect_dataset import build_probe_data
@@ -40,6 +41,7 @@ def load_math_data(
     subjects: List[str],
     min_level: int,
     require_numeric: bool,
+    show_progress: bool = False,
 ) -> List[dict]:
     print(f"Loading MATH split '{split}' (subjects={subjects}, min_level={min_level})...")
     return load_math_split(
@@ -47,6 +49,7 @@ def load_math_data(
         subjects=subjects,
         min_level=min_level,
         require_numeric=require_numeric,
+        show_progress=show_progress,
     )
 
 
@@ -76,6 +79,7 @@ def main():
         subjects=subjects,
         min_level=min_level,
         require_numeric=require_numeric,
+        show_progress=True,
     )
 
     model_id = args.model_id
@@ -84,9 +88,22 @@ def main():
     print(f"Loading model '{model_id}'...")
     model, tokenizer = load_model(model_id)
     print("Collecting hidden states...")
-    features_by_t, labels_by_t, _ = build_probe_data(
-        model, tokenizer, math_train, max_items=args.max_items
-    )
+    total_examples = min(len(math_train), args.max_items)
+    if total_examples == 0:
+        print("No examples available after filtering; exiting.")
+        return
+    with tqdm(
+        total=total_examples,
+        desc="Collecting hidden states",
+        unit="example",
+    ) as progress:
+        features_by_t, labels_by_t, _ = build_probe_data(
+            model,
+            tokenizer,
+            math_train,
+            max_items=args.max_items,
+            progress_bar=progress,
+        )
     probe_results = run_all_probes(features_by_t, labels_by_t)
     plot_probe_results(
         probe_results,

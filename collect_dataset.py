@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core_deps import CHECKPOINT_STEPS, MAX_PREFIX_TOKENS
 from features import get_prefix_hidden_states
@@ -11,6 +11,7 @@ def build_probe_data(
     tokenizer,
     math_data: List[Dict[str, Any]],
     max_items: int = 400,
+    progress_bar: Optional[Any] = None,
 ) -> Tuple[Dict[int, List[Any]], Dict[int, List[int]], List[Dict[str, Any]]]:
     """
     Runs generation + feature extraction over the dataset and returns:
@@ -54,5 +55,7 @@ def build_probe_data(
                 "prefix_states": prefix_states,
             }
         )
+        if progress_bar is not None:
+            progress_bar.update(1)
 
     return features_by_t, labels_by_t, per_example_meta

@@ -4,6 +4,11 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from datasets import load_dataset
 
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover - tqdm is an optional nicety
+    tqdm = None
+
 # Subjects exposed by the Hendrycks MATH benchmark.
 MATH_SUBJECTS = [
     "algebra",
@@ -124,6 +129,7 @@ def load_math_split(
     subjects: Optional[Iterable[str]] = None,
     min_level: int = 1,
     require_numeric: bool = True,
+    show_progress: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Load Hendrycks MATH problems and extract gold answers.
@@ -133,14 +139,33 @@ def load_math_split(
         subjects: iterable of subject names to include. Defaults to all.
         min_level: minimum difficulty level (1-5 inclusive).
         require_numeric: drop examples whose simplified gold answer is non-numeric.
+        show_progress: if True, render tqdm progress bars while iterating.
     """
     if subjects is None:
         subjects = MATH_SUBJECTS
 
     examples: List[Dict[str, Any]] = []
-    for subject in subjects:
+    subjects_list = list(subjects)
+    use_progress = show_progress and tqdm is not None
+    subject_iterable = (
+        tqdm(subjects_list, desc=f"{split} subjects", unit="subject")
+        if use_progress
+        else subjects_list
+    )
+    for subject in subject_iterable:
         dataset = load_dataset("EleutherAI/hendrycks_math", name=subject, split=split)
-        for row in dataset:
+        row_iterable = (
+            tqdm(
+                dataset,
+                total=len(dataset),
+                desc=f"{subject} ({split})",
+                unit="example",
+                leave=False,
+            )
+            if use_progress
+            else dataset
+        )
+        for row in row_iterable:
             level_str = str(row["level"]).strip()
             match = re.search(r"\d+", level_str)
             level = int(match.group(0)) if match else 0
@@ -162,6 +187,10 @@ def load_math_split(
                     "gold_answer_norm": gold_norm,
                 }
             )
+        if use_progress:
+            row_iterable.close()
+    if use_progress:
+        subject_iterable.close()
     return examples
 
 
