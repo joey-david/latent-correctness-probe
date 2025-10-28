@@ -20,6 +20,7 @@ def get_prefix_hidden_states(
     checkpoints: List[int],
     max_prefix_tokens: int,
     leak_answer_str: Optional[str] = None,
+    include_prefix_text: bool = False,
 ) -> Dict[int, Dict[str, Any]]:
     """
     For each checkpoint length t, run the model forward on prompt + first t generated tokens
@@ -66,6 +67,9 @@ def get_prefix_hidden_states(
         think_closed = "</think>" in prefix_text
         leaky = contains_answer(prefix_text, leak_answer_str) or think_closed
 
-        results[t] = {"h_t": hidden_state, "leaky": leaky, "has_think_close": think_closed}
+        entry = {"h_t": hidden_state, "leaky": leaky, "has_think_close": think_closed}
+        if include_prefix_text:
+            entry["prefix_text"] = prefix_text
+        results[t] = entry
 
     return results

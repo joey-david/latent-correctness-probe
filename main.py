@@ -64,6 +64,11 @@ def parse_args():
         default=800,
         help="Maximum number of dataset items to process",
     )
+    parser.add_argument(
+        "--print-prefixes",
+        action="store_true",
+        help="Print generated token prefixes for each checkpoint capture",
+    )
     return parser.parse_args()
 
 
@@ -71,8 +76,8 @@ def main():
     args = parse_args()
 
     subjects = list(MATH_SUBJECTS)
-    min_level = 1  # raise to 3 or higher if you only want harder problems
-    require_numeric = True  # drop examples whose gold answer cannot be normalised
+    min_level = 1  # raise to 3 or higher for harder problems
+    require_numeric = True  # drop examples whose gold answer cannot be normalized
 
     math_train = load_math_data(
         split="train",
@@ -103,6 +108,7 @@ def main():
             math_train,
             max_items=args.max_items,
             progress_bar=progress,
+            print_prefixes=args.print_prefixes,
         )
     probe_results = run_all_probes(features_by_t, labels_by_t)
     plot_probe_results(

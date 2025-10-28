@@ -12,6 +12,7 @@ def build_probe_data(
     math_data: List[Dict[str, Any]],
     max_items: int = 400,
     progress_bar: Optional[Any] = None,
+    print_prefixes: bool = False,
 ) -> Tuple[Dict[int, List[Any]], Dict[int, List[int]], List[Dict[str, Any]]]:
     """
     Runs generation + feature extraction over the dataset and returns:
@@ -23,7 +24,9 @@ def build_probe_data(
     labels_by_t: Dict[int, List[int]] = {t: [] for t in CHECKPOINT_STEPS}
     per_example_meta: List[Dict[str, Any]] = []
 
-    for ex in math_data[:max_items]:
+    writer = progress_bar.write if (progress_bar is not None) else print
+
+    for idx, ex in enumerate(math_data[:max_items], start=1):
         question = ex["problem"]
         cot_info = generate_cot(model, tokenizer, question)
         label = compute_correct_label(ex, cot_info["model_ans_norm"])
@@ -36,7 +39,18 @@ def build_probe_data(
             checkpoints=CHECKPOINT_STEPS,
             max_prefix_tokens=MAX_PREFIX_TOKENS,
             leak_answer_str=cot_info["model_ans_raw"],
+            include_prefix_text=print_prefixes,
         )
+
+        if print_prefixes:
+            writer(f"Example {idx}:")
+            writer(f"  Question: {question.strip()}")
+            writer(f"  Model answer: {cot_info.get('answer_text')}")
+            for t in sorted(prefix_states.keys()):
+                info = prefix_states[t]
+                prefix_text = info.get("prefix_text", "")
+                status = "leaky" if info["leaky"] else "clean"
+                writer(f"    t={t:>3} ({status}): {prefix_text}")
 
         for t, info in prefix_states.items():
             if info["leaky"]:
