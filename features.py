@@ -47,7 +47,9 @@ def get_prefix_hidden_states(
             output_hidden_states=True,
             use_cache=False,
         )
-        hidden_state = outputs.hidden_states[-1][:, -1, :].squeeze(0).detach().cpu().numpy()
+        hidden_state = outputs.hidden_states[-1][:, -1, :].squeeze(0).detach()
+        # Numpy cannot represent bfloat16 tensors, so cast to float32 before moving to CPU.
+        hidden_state = hidden_state.to(torch.float32).cpu().numpy()
 
         prefix_text = tokenizer.decode(reasoning_slice, skip_special_tokens=True)
         think_closed = "</think>" in prefix_text
