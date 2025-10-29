@@ -1,6 +1,7 @@
 import re
 from fractions import Fraction
-from typing import Any, Dict, Iterable, List, Optional
+import random
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from datasets import load_dataset
 
@@ -205,6 +206,55 @@ def load_math_split(
     if use_progress:
         subject_iterable.close()
     return examples
+
+
+def sample_balanced_by_difficulty(
+    examples: List[Dict[str, Any]],
+    total: int,
+    easy_levels: Sequence[int],
+    hard_levels: Sequence[int],
+    seed: int = 356,
+) -> List[Dict[str, Any]]:
+    """
+    Sample a difficulty-balanced subset from the provided examples.
+
+    Args:
+        examples: Full list of MATH problems after filtering.
+        total: Total number of problems to return. Must be even so easy/hard split equally.
+        easy_levels: Difficulty levels considered "easy".
+        hard_levels: Difficulty levels considered "hard".
+        seed: RNG seed for reproducible sampling.
+    """
+
+    if total % 2 != 0:
+        raise ValueError("total must be even to split evenly across difficulties")
+    per_bucket = total // 2
+
+    easy_pool = [ex for ex in examples if ex.get("level") in easy_levels]
+    hard_pool = [ex for ex in examples if ex.get("level") in hard_levels]
+
+    if len(easy_pool) < per_bucket:
+        raise ValueError(
+            f"Insufficient easy examples (wanted {per_bucket}, found {len(easy_pool)})"
+        )
+    if len(hard_pool) < per_bucket:
+        raise ValueError(
+            f"Insufficient hard examples (wanted {per_bucket}, found {len(hard_pool)})"
+        )
+
+    rng = random.Random(seed)
+    easy_subset = rng.sample(easy_pool, per_bucket)
+    hard_subset = rng.sample(hard_pool, per_bucket)
+
+    selected: List[Dict[str, Any]] = []
+    for difficulty, bucket in (("easy", easy_subset), ("hard", hard_subset)):
+        for ex in bucket:
+            copy = dict(ex)
+            copy["difficulty_bin"] = difficulty
+            selected.append(copy)
+
+    rng.shuffle(selected)
+    return selected
 
 
 def gold_answer_str(example: Dict[str, Any]) -> Optional[str]:

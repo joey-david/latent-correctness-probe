@@ -1,10 +1,105 @@
-from typing import Dict
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.model_selection import train_test_split
+
+
+ExampleFilter = Callable[[Dict[str, Any]], bool]
+
+
+def _default_filter(_: Dict[str, Any]) -> bool:
+    return True
+
+
+def eligible_example_indices(
+    per_example_meta: Sequence[Dict[str, Any]],
+    checkpoints: Iterable[int],
+    filter_fn: Optional[ExampleFilter] = None,
+    required_ts: Optional[Iterable[int]] = None,
+) -> List[int]:
+    """
+    Return indices of examples that satisfy the filter and contain non-leaky features
+    for all checkpoints in required_ts.
+    """
+
+    filter_fn = filter_fn or _default_filter
+    cps = set(checkpoints)
+    req = {t for t in (required_ts or []) if t in cps}
+
+    eligible: List[int] = []
+    for idx, example in enumerate(per_example_meta):
+        if not filter_fn(example):
+            continue
+        prefix_states = example.get("prefix_states", {})
+        missing = False
+        for t in req:
+            info = prefix_states.get(t)
+            if not info or info.get("leaky") or info.get("h_t") is None:
+                missing = True
+                break
+        if missing:
+            continue
+        eligible.append(idx)
+    return eligible
+
+
+def collect_features_for_indices(
+    per_example_meta: Sequence[Dict[str, Any]],
+    checkpoints: Iterable[int],
+    indices: Iterable[int],
+):
+    """
+    Assemble feature/label lists keyed by checkpoint using the cached per-example data.
+    """
+
+    checkpoints = list(checkpoints)
+    features_by_t: Dict[int, List[np.ndarray]] = {t: [] for t in checkpoints}
+    labels_by_t: Dict[int, List[int]] = {t: [] for t in checkpoints}
+
+    for idx in indices:
+        example = per_example_meta[idx]
+        label = int(example.get("is_correct", 0))
+        prefix_states = example.get("prefix_states", {})
+        for t in checkpoints:
+            info = prefix_states.get(t)
+            if not info or info.get("leaky") or info.get("h_t") is None:
+                continue
+            features_by_t[t].append(info["h_t"])
+            labels_by_t[t].append(label)
+
+    return features_by_t, labels_by_t
+
+
+def run_probes_from_meta(
+    per_example_meta: Sequence[Dict[str, Any]],
+    checkpoints: Iterable[int],
+    filter_fn: Optional[ExampleFilter] = None,
+    required_ts: Optional[Iterable[int]] = None,
+    seed: int = 42,
+):
+    """
+    Convenience wrapper that filters examples, aggregates features, and trains probes.
+
+    Returns a tuple of (probe_metrics_by_t, labels_by_t, eligible_indices).
+    """
+
+    checkpoints = list(checkpoints)
+    indices = eligible_example_indices(
+        per_example_meta,
+        checkpoints=checkpoints,
+        filter_fn=filter_fn,
+        required_ts=required_ts,
+    )
+    features_by_t, labels_by_t = collect_features_for_indices(
+        per_example_meta,
+        checkpoints=checkpoints,
+        indices=indices,
+    )
+    metrics = run_all_probes(features_by_t, labels_by_t, seed=seed)
+    return metrics, labels_by_t, indices
 
 
 def train_eval_probe(features: np.ndarray, labels: np.ndarray, seed: int = 42):
