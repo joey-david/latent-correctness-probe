@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 import torch
+import torch.nn.functional as F
 
 def contains_answer(prefix_text: str, answer_str: Optional[str]) -> bool:
     """
@@ -67,7 +68,25 @@ def get_prefix_hidden_states(
         think_closed = "</think>" in prefix_text
         leaky = contains_answer(prefix_text, leak_answer_str) or think_closed
 
-        entry = {"h_t": hidden_state, "leaky": leaky, "has_think_close": think_closed}
+        next_token_logprob: Optional[float] = None
+        next_token_entropy: Optional[float] = None
+        if hasattr(outputs, "logits") and outputs.logits is not None:
+            next_token_logits = outputs.logits[0, -1].to(torch.float32)
+            log_probs = F.log_softmax(next_token_logits, dim=-1)
+            probs = log_probs.exp()
+            next_token_entropy = float(-(probs * log_probs).sum().item())
+            if t < len(gen_token_ids):
+                next_token_id = int(gen_token_ids[t].item())
+                next_token_logprob = float(log_probs[next_token_id].item())
+
+        entry = {
+            "h_t": hidden_state,
+            "leaky": leaky,
+            "has_think_close": think_closed,
+            "next_token_logprob": next_token_logprob,
+            "next_token_entropy": next_token_entropy,
+            "prefix_len": t,
+        }
         if include_prefix_text:
             entry["prefix_text"] = prefix_text
         results[t] = entry
