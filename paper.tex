@@ -1,0 +1,260 @@
+% !TEX program = pdflatex
+\documentclass[10pt,a4paper,twocolumn]{article}
+
+% ---------- Look & feel ----------
+\usepackage[left=1.6cm,right=1.6cm,top=1.6cm,bottom=1.9cm]{geometry}
+\setlength{\columnsep}{0.64cm}
+\setlength{\parindent}{0pt}
+
+\usepackage{newpxtext,newpxmath}  % sleek serif text/math
+\usepackage[scaled=0.92]{DejaVuSansMono}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=black}
+\usepackage[capitalise,noabbrev]{cleveref}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{amsmath,amssymb}
+\usepackage{csquotes}
+\usepackage{titlesec}
+\usepackage{titling}
+\usepackage{ragged2e}
+\usepackage[labelfont=bf,font=small]{caption}
+
+% tighter headings
+\titlespacing\section{0pt}{8pt plus 2pt minus 2pt}{6pt plus 2pt minus 2pt}
+\titlespacing\subsection{0pt}{6pt plus 2pt minus 2pt}{4pt plus 1pt minus 1pt}
+\titleformat{\section}{\large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+
+% subtle link underline for urls in references (optional)
+\usepackage[normalem]{ulem}
+\renewcommand{\ULdepth}{1.8pt}
+
+% small helper to draw figure placeholders
+\newcommand{\figph}[2][2.1in]{%
+  \fbox{\parbox[c][#1][c]{0.96\linewidth}{\centering \vspace{0.5em}\textit{#2}\vspace{0.5em}}}%
+}
+
+% inline TODOs (remove before submission)
+\newcommand{\todo}[1]{\textcolor{magenta}{[\textbf{TODO}: #1]}}
+
+% ---------- Title ----------
+\setlength{\droptitle}{-8pt}
+\pretitle{%
+  \begin{center}
+  \rule{\linewidth}{1pt}
+  \par\vspace{8pt}
+  \fontsize{14}{16}\selectfont\bfseries
+}
+\posttitle{\par\vspace{8pt}\rule{\linewidth}{1pt}\end{center}}
+\preauthor{\par\vspace{6pt}\begin{center}\normalsize}
+\postauthor{\end{center}}
+\predate{}\postdate{}
+
+\title{Temporal Predictors of Outcome in Reasoning Language Models}
+\author{
+  \textbf{Joey David} \\[1pt]
+  Independent Researcher \\[1pt]
+  joeydhp@protonmail.com
+}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{4mm}
+
+% ---------- Abstract ----------
+\renewenvironment{abstract}{
+  \begin{center}
+  \begin{minipage}{0.9\columnwidth}
+  \centering{\large\bfseries\abstractname}
+  \par\vspace{4pt}
+  \justifying
+  \ignorespaces
+}{
+  \end{minipage}
+  \end{center}
+}
+
+\begin{abstract}
+We ask \emph{how early} a large language model internally ``knows'' whether it will ultimately solve a math problem when generating chain-of-thought (CoT). Using linear probes on hidden states taken after the first $t$ reasoning tokens, we show that eventual correctness is highly predictable after only $4$--$8$ tokens. We further expose and correct a survivorship bias that makes naïve probe-vs-prefix curves appear to degrade at long prefixes. Two simple evaluation fixes---a carry-forward curve and a fixed-subset protocol---reveal that the early signal persists. Our probe also outperforms token-entropy and length baselines, and calibrates with difficulty. \todo{Tighten to 120--150 words.}
+\end{abstract}
+
+% ---------- Keywords (optional) ----------
+\vspace{-2mm}
+\textbf{Keywords:} latent reasoning, confidence probing, chain-of-thought, early exit, interpretability
+
+% ---------- 1. Introduction ----------
+\section{Introduction}
+\label{sec:intro}
+\textbf{Claim.} A model's hidden state \emph{very early} in its own CoT already encodes whether it will succeed on the instance.
+We quantify emergence time, disentangle time from difficulty-induced selection, and compare against trivial baselines.
+
+\noindent\textbf{Contributions.}
+\begin{enumerate}[leftmargin=*,itemsep=2pt,topsep=2pt]
+  \item Show early emergence: linear probes at $t{=}4$--$8$ tokens predict eventual correctness with high AUC.
+  \item Identify and correct survivorship bias in naïve probe-vs-$t$ curves via (i) carry-forward and (ii) fixed-subset protocols.
+  \item Establish non-triviality: hidden-state probes beat entropy/length baselines; signal calibrates with difficulty.
+\end{enumerate}
+
+% ---------- 2. Related Work ----------
+\section{Related Work}
+\label{sec:related}
+\subsection{Confidence Probing and Early Exit}
+Briefly position against prior work that predicts success/correctness from activations and early-stopping criteria. \todo{Cite.}
+
+\subsection{Latent Reasoning and CoT}
+Discussion of internal vs.\ external reasoning, decodability, and interpretability lenses. \todo{Cite.}
+
+% ---------- 3. Method ----------
+\section{Method}
+\label{sec:method}
+\subsection{Data and Prompting}
+Hendrycks MATH; instruct-style prompts; final answers in \verb|\boxed{...}|; greedy decoding. \todo{Add exact prompt templates.}
+
+\subsection{From CoT to Prefix Hidden States}
+For each instance, generate CoT; for prefix lengths $t\in\{4,8,16,32,64,128,\dots\}$, teacher-force to obtain last-token hidden state $h_t$.
+
+\subsection{Binary Correctness Label}
+Label $y{=}1$ if model's final answer equals gold (normalized numeric or cleaned string), else $0$; exclude prefixes leaking the final number.
+
+\subsection{Linear Probe}
+PCA to 128D (pooled or per-$t$), then logistic regression (or 1-layer torch BCE) to predict $y$ from $h_t$; metrics: AUC, accuracy.
+
+\subsection{Bias Corrections}
+\paragraph{Carry-forward (CF).} Cumulative-maximum of metrics across $t$ to retain early wins that vanish due to early termination.
+\paragraph{Fixed-subset (FS).} Restrict to items with CoT length $\ge T_{\text{ref}}$; evaluate all $t\le T_{\text{ref}}$ on the \emph{same} items.
+
+\subsection{Leakage Audit and Baselines}
+Leak rate vs.\ $t$; baselines from next-token entropy and prefix length.
+
+% ---------- Fig 1 (raw vs CF) ----------
+\begin{figure}[t]
+  \centering
+  \figph{Placeholder: \textbf{Fig.~1} AUC/ACC vs prefix length. Solid=raw; dashed=carry-forward. Annotate $p_{\text{pos}}$ along the curve.}
+  \caption{Probe performance vs.\ prefix length: raw (solid) vs.\ carry-forward (dashed).}
+  \label{fig:raw-cf}
+\end{figure}
+
+% ---------- 4. Experiments ----------
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Setup}
+Models (e.g., Qwen3-8B, Mistral-7B), decoding (greedy), compute, and dataset filters (levels). \todo{Fill concrete IDs and counts.}
+
+\subsection{Main Results}
+\paragraph{Early emergence.} High AUC at $t{=}4$--$8$; show CI bands.
+\paragraph{Bias-corrected curves.} CF plateaus early; FS confirms persistence on long-CoT subset.
+
+% ---------- Fig 2 (fixed-subset) ----------
+\begin{figure}[t]
+  \centering
+  \figph{Placeholder: \textbf{Fig.~2} Fixed-subset AUC/ACC vs $t$ (only items with CoT length $\ge T_{\text{ref}}$).}
+  \caption{Fixed-subset evaluation disentangles time from survivorship of hard items.}
+  \label{fig:fixed-subset}
+\end{figure}
+
+\subsection{Difficulty Stratification}
+Split by MATH level (e.g., $\le2$ vs.\ $\ge4$); show bar chart of AUC at $t{=}4$ or $8$.
+
+% ---------- Fig 3 (difficulty bars) ----------
+\begin{figure}[t]
+  \centering
+  \figph[1.6in]{Placeholder: \textbf{Fig.~3} Difficulty-stratified AUC at short prefix (bars for easy vs hard).}
+  \caption{Calibration: early hidden states separate success/failure better on easier items.}
+  \label{fig:difficulty}
+\end{figure}
+
+\subsection{Baselines vs Hidden-State Probe}
+Compare probe to entropy-only, length-only, and entropy+length.
+
+% ---------- Fig 4 (baselines) ----------
+\begin{figure}[t]
+  \centering
+  \figph{Placeholder: \textbf{Fig.~4} AUC vs $t$: hidden-state probe vs entropy, length, entropy+length.}
+  \caption{Hidden-state probe outperforms trivial uncertainty/length baselines.}
+  \label{fig:baselines}
+\end{figure}
+
+\subsection{Leakage Audit}
+Percent of prefixes dropped due to answer leakage as a function of $t$.
+
+% ---------- Fig 5 (leakage) ----------
+\begin{figure}[t]
+  \centering
+  \figph[1.6in]{Placeholder: \textbf{Fig.~5} Leakage rate vs prefix length.}
+  \caption{Leakage is small at short prefixes; early AUC cannot be explained by visible digits.}
+  \label{fig:leakage}
+\end{figure}
+
+\subsection{Ablations (Optional)}
+Prompt variants; masking digits during teacher-forcing; numeric-only vs symbolic gold; PCA dimension.
+
+% ---------- Table 1 (stats) ----------
+\begin{table}[t]
+  \centering
+  \caption{Run statistics.\vspace{2pt}}
+  \begin{tabular}{lrrr}
+  \toprule
+  Prefix $t$ & $N$ used & $p_{\text{pos}}$ & Leak \% \\
+  \midrule
+  4 & 1700 & 0.62 & 0.6 \\
+  8 & 1700 & 0.62 & 0.9 \\
+  \dots & \dots & \dots & \dots \\
+  \bottomrule
+  \end{tabular}
+  \label{tab:stats}
+\end{table}
+
+% ---------- 5. Discussion ----------
+\section{Discussion}
+\label{sec:discussion}
+Implications for budgeted reasoning, routing, and self-monitoring; why emergence is so early; links to interpretability and safety.
+
+% ---------- 6. Limitations ----------
+\section{Limitations}
+\label{sec:limitations}
+Scope (math domain, greedy decoding), linearity of probes, normalization quirks, dataset artifacts.
+
+% ---------- 7. Conclusion ----------
+\section{Conclusion}
+\label{sec:conclusion}
+We provide a simple, bias-aware protocol showing that latent self-assessment appears within a handful of tokens and persists under fair evaluation.
+
+% ---------- Broader Impact (optional) ----------
+\section*{Broader Impact (Optional)}
+Potential misuse, monitoring, and guardrails for early-exit systems.
+
+% ---------- Acknowledgments (optional) ----------
+\section*{Acknowledgments}
+\todo{Add funding/thanks.}
+
+% ---------- References ----------
+\vspace{-2mm}
+\begingroup
+\small
+\begin{thebibliography}{9}
+
+\bibitem{hendrycks2021math}
+Hendrycks, D., et al.
+\newblock Measuring Mathematical Problem Solving With the MATH Dataset.
+\newblock \emph{NeurIPS}, 2021.
+
+% \bibitem{...} Add more.
+
+\end{thebibliography}
+\endgroup
+
+% ---------- Appendix (optional) ----------
+\appendix
+\section*{Appendix (Optional)}
+Extra plots, prompt templates, and implementation details.
+
+\end{document}
