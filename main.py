@@ -54,7 +54,12 @@ def resolve_model_ids(args) -> List[str]:
             token.strip() for token in args.model_ids_csv.split(",") if token.strip()
         )
     if not explicit:
-        explicit.append("Qwen/Qwen3-8B")
+        explicit.extend(
+            [
+                "Qwen/Qwen3-8B",
+                "meta-llama/Llama-3.1-8B-Instruct",
+            ]
+        )
     return explicit
 
 
@@ -83,7 +88,7 @@ def validate_model_ids(model_ids: List[str]) -> None:
 
 def load_model(model_id: str):
     """
-    Load a reasoning model with FP16 weights and automatic device placement.
+    Load a reasoning model with automatic dtype and device placement.
     """
     tokenizer = AutoTokenizer.from_pretrained(
         model_id,
@@ -93,7 +98,7 @@ def load_model(model_id: str):
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
-        dtype="auto",
+        torch_dtype="auto",
         device_map="auto",
         trust_remote_code=True,
     )

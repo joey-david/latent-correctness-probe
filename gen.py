@@ -7,6 +7,10 @@ from core_deps import MAX_NEW_TOKENS
 from data import parse_model_answer
 
 
+FORCED_SUFFIX = "\nThus the final numeric answer is \\boxed{"
+FORCED_SUFFIX_EXTRA_TOKENS = 32
+
+
 def _is_qwen3(tokenizer: AutoTokenizer) -> bool:
     name = getattr(tokenizer, "name_or_path", "") or ""
     if "qwen3" in name.lower():
@@ -17,9 +21,23 @@ def _is_qwen3(tokenizer: AutoTokenizer) -> bool:
     return False
 
 
+def _is_llama31(tokenizer: AutoTokenizer) -> bool:
+    name = getattr(tokenizer, "name_or_path", "") or ""
+    lower_name = name.lower()
+    if "llama-3.1" in lower_name or "llama3.1" in lower_name:
+        return True
+    if "llama-3" in lower_name and "instruct" in lower_name:
+        return True
+    template = getattr(tokenizer, "chat_template", "") or ""
+    lower_template = template.lower()
+    if "llama-3.1" in lower_template or "llama-3" in lower_template:
+        return True
+    return False
+
+
 def build_prompt(question: str, tokenizer: AutoTokenizer) -> str:
     """
-    Builds the prompt for the model. Uses Qwen3 chat templating to enable thinking mode when available.
+    Build a prompt tailored to the detected model family.
     """
     if _is_qwen3(tokenizer):
         messages = [
@@ -39,9 +57,35 @@ def build_prompt(question: str, tokenizer: AutoTokenizer) -> str:
             enable_thinking=True,
         )
 
+    if _is_llama31(tokenizer):
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a competition-math tutor. "
+                    "Solve problems step by step, then deliver the final numeric answer inside \\boxed{...}."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Solve the following problem. Show your reasoning, then finish with "
+                    "ONLY the final numeric answer in \\boxed{...}.\n\n"
+                    f"{question}"
+                ),
+            },
+        ]
+        return tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
     return (
+        "You are a competition-math tutor. Solve the problem step by step. "
+        "At the end, output ONLY the final numeric answer inside \\boxed{...}.\n\n"
         f"Question: {question}\n\n"
-        "Answer:\n"
+        "Reasoning:\n"
     )
 
 
@@ -87,12 +131,16 @@ def generate_cot(
     if parsed["raw"] is None or reached_limit:
         forced_completion = True
 
-        needs_think_close = "<think>" in gen_text and "</think>" not in gen_text
-        forced_suffix_parts = []
+        needs_think_close = (
+            _is_qwen3(tokenizer)
+            and "<think>" in gen_text
+            and "</think>" not in gen_text
+        )
+        forced_parts = []
         if needs_think_close:
-            forced_suffix_parts.append("</think>")
-        forced_suffix_parts.append(FORCED_SUFFIX_SUFFIX)
-        forced_suffix = "".join(forced_suffix_parts)
+            forced_parts.append("</think>")
+        forced_parts.append(FORCED_SUFFIX)
+        forced_suffix = "".join(forced_parts)
 
         forced_suffix_ids = tokenizer(
             forced_suffix,
@@ -137,5 +185,3 @@ def generate_cot(
         "gen_token_ids": gen_ids.detach().cpu(),
         "forced_completion": forced_completion,
     }
-FORCED_SUFFIX_SUFFIX = "\nThus the final numeric answer is is \\boxed{"
-FORCED_SUFFIX_EXTRA_TOKENS = 32

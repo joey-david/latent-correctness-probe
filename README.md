@@ -1,6 +1,6 @@
 # Latent Correctness Probe
 
-This repo measures whether a reasoning language model already "knows" if it will solve a *hard* math problem correctly before finishing its chain-of-thought. For two instruction-tuned models (one Qwen-like, one Mistral-like) we:
+This repo measures whether a reasoning language model already "knows" if it will solve a *hard* math problem correctly before finishing its chain-of-thought. For two instruction-tuned models (Qwen3-8B and Llama-3.1-8B-Instruct) we:
 
 - Decode greedy chain-of-thought answers on **Hendrycks MATH (NeurIPS 2021)** problems.
 - Snapshot the model's last hidden state after the first `t` reasoning tokens (`t ∈ {1,2,4,8,16,32,64,128}`).
@@ -21,14 +21,15 @@ If probe performance rises with `t`, it suggests the internal representation alr
 
 ```bash
 pip install -r requirements.txt
-python main.py --model-id Qwen/Qwen3-8B
+python main.py
 ```
 
-To compare multiple models in a single run, repeat `--model-id` (or pass `--model-ids` with a comma-separated list):
+By default this will evaluate both `Qwen/Qwen3-8B` and `meta-llama/Llama-3.1-8B-Instruct`. To compare additional models in a single run, repeat `--model-id` (or pass `--model-ids` with a comma-separated list):
 
 ```bash
 python main.py \
   --model-id Qwen/Qwen3-8B \
+  --model-id meta-llama/Llama-3.1-8B-Instruct \
   --model-id mistralai/Mistral-7B-Instruct-v0.3
 ```
 
@@ -46,15 +47,17 @@ This utility concatenates all seven subjects (`algebra`, `counting_and_probabili
 
 ### 2. Configure model checkpoints
 
-`main.py` evaluates `Qwen/Qwen3-8B` by default. Provide `--model-id` flags to override or add more checkpoints. Each model is processed in turn while sharing the same difficulty-balanced dataset, so you can gather comparative results in a single run:
+`main.py` evaluates `Qwen/Qwen3-8B` and `meta-llama/Llama-3.1-8B-Instruct` by default. Provide `--model-id` flags to override or add more checkpoints. Each model is processed in turn while sharing the same difficulty-balanced dataset, so you can gather comparative results in a single run:
 
 ```bash
 python main.py \
   --model-id Qwen/Qwen3-8B \
-  --model-id meta-llama/Meta-Llama-3-8B-Instruct
+  --model-id meta-llama/Llama-3.1-8B-Instruct
 ```
 
-Models load with `device_map="auto"` and `dtype="auto"` (typically FP16 on GPU). Ensure the target GPU has enough VRAM to hold the largest model you request; running two 8B models back-to-back fits comfortably on a 40 GB A100.
+We follow each vendor's recommended prompt format: Qwen runs with `<think>...</think>` enabled via its chat template, while Llama-3.1 uses the official chat template with `add_generation_prompt=True` and an explicit request for step-by-step reasoning plus a boxed final answer.
+
+Models load with `device_map="auto"` and `torch_dtype="auto"` (typically BF16/FP16 on GPU). Ensure the target GPU has enough VRAM to hold the largest model you request; running two 8B models back-to-back fits comfortably on a 40 GB A100.
 
 ### 3. Expected outputs
 
@@ -98,7 +101,7 @@ Use the provided `Dockerfile` to ship the probe to a GPU box that only accepts c
      -e HF_HOME=/app/.cache/huggingface \
      latent-correctness-probe \
      --model-id Qwen/Qwen3-8B \
-     --model-id mistralai/Mistral-7B-Instruct-v0.3 \
+     --model-id meta-llama/Llama-3.1-8B-Instruct \
      --total-examples 100
    ```
 
