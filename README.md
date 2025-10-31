@@ -21,7 +21,15 @@ If probe performance rises with `t`, it suggests the internal representation alr
 
 ```bash
 pip install -r requirements.txt
-python main.py
+python main.py --model-id Qwen/Qwen3-8B
+```
+
+To compare multiple models in a single run, repeat `--model-id` (or pass `--model-ids` with a comma-separated list):
+
+```bash
+python main.py \
+  --model-id Qwen/Qwen3-8B \
+  --model-id mistralai/Mistral-7B-Instruct-v0.3
 ```
 
 ### 1. Prepare Hendrycks MATH data
@@ -38,19 +46,22 @@ This utility concatenates all seven subjects (`algebra`, `counting_and_probabili
 
 ### 2. Configure model checkpoints
 
-`main.py` defaults to:
+`main.py` evaluates `Qwen/Qwen3-8B` by default. Provide `--model-id` flags to override or add more checkpoints. Each model is processed in turn while sharing the same difficulty-balanced dataset, so you can gather comparative results in a single run:
 
-- Qwen: `Qwen/Qwen3-8B`
-- Mistral: `mistralai/Mistral-7B-Instruct-v0.3`
+```bash
+python main.py \
+  --model-id Qwen/Qwen3-8B \
+  --model-id meta-llama/Meta-Llama-3-8B-Instruct
+```
 
-Edit `qwen_id` / `other_id` in `main.py` to change them. Models are loaded with `torch_dtype=torch.float16` and `device_map="auto"`, so you need a GPU configuration that Hugging Face Accelerate can target automatically.
+Models load with `device_map="auto"` and `dtype="auto"` (typically FP16 on GPU). Ensure the target GPU has enough VRAM to hold the largest model you request; running two 8B models back-to-back fits comfortably on a 40 GB A100.
 
 ### 3. Expected outputs
 
 Running `python main.py` will:
 
 1. Load MATH training data (respecting the `min_level` and numeric filter in `main.py`).
-2. Decode CoT answers for each example with both models.
+2. Decode CoT answers for each example with every requested model.
 3. Collect hidden states at every checkpoint (skipping leaky prefixes).
 4. Train logistic probes and evaluate with a train/test split.
 5. Print metrics dictionary per prefix length, e.g.:
@@ -63,11 +74,35 @@ Running `python main.py` will:
    }
    ```
 
-6. Save plots:
-   - `qwen_curve.png`
-   - `other_curve.png`
+6. Save plots in `figs/` such as:
+   - `<model_tag>_curve_overall.png`
+   - `<model_tag>_difficulty_curves.png`
+   - `<model_tag>_carryforward.png`
 
-Each plot shows ROC-AUC and accuracy versus prefix length.
+`model_tag` is the model identifier with `/`, `@`, and `:` replaced by `__`. Each plot shows ROC-AUC and accuracy versus prefix length.
+
+## Docker GPU Inference
+
+Use the provided `Dockerfile` to ship the probe to a GPU box that only accepts container jobs.
+
+1. Build the image (from the repo root):
+   ```bash
+   docker build -t latent-correctness-probe .
+   ```
+2. Launch a run, mounting the working directories you want to persist and passing any model flags. Include `--gpus all` (or `--gpus device=0`) on CUDA hosts:
+   ```bash
+   docker run --rm --gpus all \
+     -v $PWD/results:/app/results \
+     -v $PWD/runs:/app/runs \
+     -v $PWD/figs:/app/figs \
+     -e HF_HOME=/app/.cache/huggingface \
+     latent-correctness-probe \
+     --model-id Qwen/Qwen3-8B \
+     --model-id mistralai/Mistral-7B-Instruct-v0.3 \
+     --total-examples 100
+   ```
+
+Mount an existing Hugging Face cache (e.g., `-v $HOME/.cache/huggingface:/app/.cache/huggingface`) to avoid re-downloading large checkpoints. Provide `HF_TOKEN` via `-e HF_TOKEN=...` if the models require authentication.
 
 ## File Overview
 

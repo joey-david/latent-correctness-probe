@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.git
+.gitignore
+figs/
+runs/
+results/
+log.txt
+.DS_Store
+*.swp
+*.swo

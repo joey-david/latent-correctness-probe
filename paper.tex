@@ -46,14 +46,14 @@
 
 % ---------- Title ----------
 \setlength{\droptitle}{-8pt}
-\pretitle{%
+\pretitle{
   \begin{center}
-  \rule{\linewidth}{1pt}
-  \par\vspace{8pt}
+  \rule{\linewidth}{0.75pt}
+  \par\vspace{12pt}
   \fontsize{14}{16}\selectfont\bfseries
 }
-\posttitle{\par\vspace{8pt}\rule{\linewidth}{1pt}\end{center}}
-\preauthor{\par\vspace{6pt}\begin{center}\normalsize}
+\posttitle{\par\vspace{4pt}\rule{\linewidth}{0.75pt}\end{center}}
+\preauthor{\par\vspace{7pt}\begin{center}\normalsize}
 \postauthor{\end{center}}
 \predate{}\postdate{}
 
@@ -67,14 +67,14 @@
 
 \begin{document}
 \maketitle
-\vspace{4mm}
+\vspace{10mm}
 
 % ---------- Abstract ----------
 \renewenvironment{abstract}{
   \begin{center}
   \begin{minipage}{0.9\columnwidth}
   \centering{\large\bfseries\abstractname}
-  \par\vspace{4pt}
+  \par\vspace{14pt}
   \justifying
   \ignorespaces
 }{
@@ -83,131 +83,174 @@
 }
 
 \begin{abstract}
-We ask \emph{how early} a large language model internally ``knows'' whether it will ultimately solve a math problem when generating chain-of-thought (CoT). Using linear probes on hidden states taken after the first $t$ reasoning tokens, we show that eventual correctness is highly predictable after only $4$--$8$ tokens. We further expose and correct a survivorship bias that makes naïve probe-vs-prefix curves appear to degrade at long prefixes. Two simple evaluation fixes---a carry-forward curve and a fixed-subset protocol---reveal that the early signal persists. Our probe also outperforms token-entropy and length baselines, and calibrates with difficulty. \todo{Tighten to 120--150 words.}
+The chain-of-thought (CoT) paradigm uses the elicitation of step-by-step rationales as a proxy for reasoning, gradually refining the model’s latent representation of a solution. However, it remains unclear just how early a Large Language Model (LLM) internally commits to an eventual outcome. We probe this by training linear classifiers on hidden states after the first $t$ reasoning tokens, showing that eventual correctness is highly predictable after only a few tokens, even when longer outputs are needed to reach a definite answer. We show that, for harder questions, a drop in predictive accuracy highlights a selection artifact: hard items are disproportionately represented in long CoTs. Overall, our results imply that for reasoning models, internal self-assessment of success tends to emerge after only a few tokens, with implications for interpretability and for inference-time control.
 \end{abstract}
 
-% ---------- Keywords (optional) ----------
-\vspace{-2mm}
-\textbf{Keywords:} latent reasoning, confidence probing, chain-of-thought, early exit, interpretability
+\par\vspace{10pt}
 
 % ---------- 1. Introduction ----------
 \section{Introduction}
 \label{sec:intro}
-\textbf{Claim.} A model's hidden state \emph{very early} in its own CoT already encodes whether it will succeed on the instance.
-We quantify emergence time, disentangle time from difficulty-induced selection, and compare against trivial baselines.
 
-\noindent\textbf{Contributions.}
-\begin{enumerate}[leftmargin=*,itemsep=2pt,topsep=2pt]
-  \item Show early emergence: linear probes at $t{=}4$--$8$ tokens predict eventual correctness with high AUC.
-  \item Identify and correct survivorship bias in naïve probe-vs-$t$ curves via (i) carry-forward and (ii) fixed-subset protocols.
-  \item Establish non-triviality: hidden-state probes beat entropy/length baselines; signal calibrates with difficulty.
-\end{enumerate}
+Late 2024 and early 2025 saw the first large-scale implementations of CoT finetuning and prompting, notably in OpenAI's \textit{o1} \cite{openai2024openaio1card} and Deepseek's \textit{R1}\cite{deepseekai2025deepseekr1incentivizingreasoningcapability} models. This led to LLMs achieving unheard-of performance in cognitively demanding tasks, especially in mathematical problem-solving and commonsense reasoning. The mechanism behind these improvements consists in pushing the model to generate a step-by-step path to a solution, openly formulating calculations or deductions, possibly reflecting on possible mistakes that could be made along the way before settling on a final answer. CoT generations are not mechanistically different from \textit{regular} token generation; they are simply specialized to problem-solving. Thus, deciding whether a model's latent representation has already converged onto a definite answer, or whether all of the CoT remains necessary to reach it, is an important but non-trivial problem. A model able to assess when it is honing in on the right solution may enable early error detection, better calibration, or dynamic halting of reasoning to save computation \cite{mao2025earlystoppingchainofthoughtslarge}.
+
+% ---------- Fig 1 (answer length vs accuracy) ----------
+\begin{figure}[t]
+  \vspace{1.5cm}
+  \centering
+  \makebox[\columnwidth][c]{\includegraphics[width=1.05\columnwidth]{Qwen3-8B_baselines.png}}
+  \caption{Probe performance vs. entropy and length baselines, depending on CoT length.}
+  \label{fig:raw-cf}
+\end{figure}
+
+
+In this work, we attempt to answer whether such an insight can be achieved, by probing the hidden states of an LLM at several points during the generation of its chain-of-thought. Our experiments reveal a surprising result - a detectable correctness signal generally emerges very early into the reasoning process, even for longer CoT outputs. To ensure robust evaluation, we compare probe performance on the same set of problems across different prefix lengths $t$. Our analysis confirms that the model’s internal state truly encodes, to a significant extent, whether the answer will be correct well before outputting it.
+
+Finally, we highlight how our approach differs from existing methods. Prior works on confidence estimation largely rely on post-hoc signals (the final answer logits or multiple sampled solutions) and added mechanisms at inference time. In contrast, we directly probe the model’s own hidden trajectory during reasoning, without requiring any extra decoding passes or fine-tuning of the model. Our results show that a simple linear probe is enough to tap into the model’s self-monitoring capabilities. By focusing on challenging long-form math problems, we uncover an early internal self-assessment that was previously elusive (earlier question-only probes struggled on math). In summary, our contributions include:
+
+\begin{itemize}[leftmargin=1em]
+  \item \textbf{Probing during generation:} We develop a methodology to predict answer correctness from an LLM’s hidden state throughout the generation of its chain-of-thought, rather than only after the final answer. This allows us to assess the model’s internal confidence in real time as it reasons.
+  \item \textbf{Early correctness signal:} We identify a reliable latent signal of correctness after only a few tokens of reasoning (around 4 tokens in our experiments), indicating that the model’s internal computation encodes outcome likelihood far earlier than its verbalized solution.
+  \item \textbf{Difficulty-dependent evaluation:} We demonstrate that harder problems not only lead to lengthier CoT generations, but also to sparser signals of confidence.
+\end{itemize}
+
 
 % ---------- 2. Related Work ----------
 \section{Related Work}
 \label{sec:related}
-\subsection{Confidence Probing and Early Exit}
-Briefly position against prior work that predicts success/correctness from activations and early-stopping criteria. \todo{Cite.}
+
+\subsection{Probing hidden activations for correctness and factuality.}
+
+A growing line of work shows that LLM hidden states encode latent information about truthfulness and correctness that may not surface in its token-space output.\cite{cencerrado2025probe} extract the residual activation right after the question is processed by the model (i.e., before any answer token is produced) and train a linear probe to predict whether the model’s eventual answer will be correct. While able to reach above-chance success prediction on trivia-style QA, subsequent results of this work suggest that mathematical reasoning makes it harder to linearly decode internal confidence. Our work expands on this, and targets this gap by (i) focusing on math CoT and (ii) probing hidden states \emph{during} the reasoning trajectory, not only in the pre-answer state.
+
+Similarly, \cite{gekhman2024insideout} introduce the \textit{Inside-Out} framework to quantify factual knowledge stored in hidden representations. They show that models frequently encode more correct facts internally than they actually express, with hidden representations yielding markedly higher recall than the generated text. Remarkably, they show that a model can internally embed a fact (with the correct answer being ranked highest in latent space) yet systematically fail to output it. These results strengthen the view that latent activations contain rich information signals, not fully exploited by standard decoding. We build on this observation in the context of CoT reasoning.
+
+\subsection{Early stopping in CoT reasoning.}
+
+Long CoT traces are expensive, and several methods try to stop decoding once the answer is effectively determined. ES-CoT \cite{mao2025escot} asks the model for its current answer at several points during the procedure; using the length of the resulting \textit{step-answer} compared to other step-answers as a criterion for convergence. While this approach yields substantial token savings with minimal accuracy loss, it relies entirely on output-space heuristics and does not exploit the model's internal signals. This behavior could lag behind the model's internal confidence, and the model might already carry a signal unique to the answer before it begins to repeat it in output. HALT-CoT \cite{laaouach2025haltcot} instead monitors the entropy of the next-answer distribution and stops when entropy falls below a threshold, cutting 15–30\% of tokens on GSM8K while keeping accuracy within about 0.4 points of full CoT. By contrast, our probe uses \emph{internal} signals: it aims to predict correctness from the hidden state \emph{before} the answer has converged. This potentially enables even earlier interventions—e.g., switching to self-reflection or to an alternative decoding strategy as soon as the internal probe flags low confidence; making our method complementary to ES-CoT and HALT-CoT. 
 
 \subsection{Latent Reasoning and CoT}
-Discussion of internal vs.\ external reasoning, decodability, and interpretability lenses. \todo{Cite.}
+
+Our work builds on chain-of-thought prompting \cite{wei2022chain}, which showed that providing structured intermediate steps allows LLMs to solve arithmetic and logical problems with much greater consistency than naïve prompting. Prior CoT research has noted that longer reasoning is not always better—models can “overthink” easy questions and introduce errors in late steps \cite{kojima2022large, zhou2023leastto}. This observation motivates internal progress monitoring: if the model’s activations early in the trajectory already suggest high eventual correctness, we could truncate or adapt the reasoning on the fly. To the best of our knowledge, our results are among the first to show that in complex multi-step math settings, partial CoT hidden states are greatly decodable for eventual correctness.
 
 % ---------- 3. Method ----------
 \section{Method}
 \label{sec:method}
-\subsection{Data and Prompting}
-Hendrycks MATH; instruct-style prompts; final answers in \verb|\boxed{...}|; greedy decoding. \todo{Add exact prompt templates.}
 
-\subsection{From CoT to Prefix Hidden States}
-For each instance, generate CoT; for prefix lengths $t\in\{4,8,16,32,64,128,\dots\}$, teacher-force to obtain last-token hidden state $h_t$.
+\subsection{Difficulty-balanced data}
+We study Hendrycks MATH \cite{hendrycksmath2021} using the helpers in \texttt{data.py}.  All seven subjects are streamed through \texttt{load\_math\_split}, which filters to numerically normalisable gold answers via lightweight LaTeX stripping and fraction simplification.  We follow the code path in \texttt{sample\_balanced\_by\_difficulty}: levels~1--2 populate the \emph{easy} bucket, and levels~4--5 the \emph{hard} bucket.  From the resulting pool we draw 750 problems per bucket (seed~356), yielding 1{,}500 examples with a base correctness of 58.6\%.  Easy instances are solved 85.1\% of the time, while hard ones drop to 32.1\%, giving a wide accuracy dynamic for probing latent confidence.
 
-\subsection{Binary Correctness Label}
-Label $y{=}1$ if model's final answer equals gold (normalized numeric or cleaned string), else $0$; exclude prefixes leaking the final number.
+\subsection{Prompting and chain-of-thought harvesting}
+Question prompts are produced by \texttt{build\_prompt}.  For Qwen3 series models we enable their structured reasoning mode: the system message instructs the model to think inside \verb|<think>...</think>| before emitting a boxed numeric answer.  Generation is handled by \texttt{generate\_cot}, which performs greedy decoding (\texttt{temperature}=0, \texttt{max\_new\_tokens}=512).  When the raw completion either omits a boxed answer or leaves the thinking span unclosed, we append a deterministic suffix (\texttt{FORCED\_SUFFIX\_SUFFIX}) and continue for up to 32 extra tokens.  In practice 1{,}498 of the 1{,}500 examples required this forced wrap-up, ensuring every trace ends with a consistent final answer segment.
 
-\subsection{Linear Probe}
-PCA to 128D (pooled or per-$t$), then logistic regression (or 1-layer torch BCE) to predict $y$ from $h_t$; metrics: AUC, accuracy.
+\subsection{Prefix hidden-state extraction}
+For every generated solution we recover activations at fixed prefix lengths $t \in \{4,8,16,32,64,128,192,256,384,512\}$ using \texttt{get\_prefix\_hidden\_states}.  The function replays the prompt plus the first $t$ generated tokens, captures the final decoder layer, and averages the last four reasoning tokens (or fewer when $t<4$) to obtain a pooled hidden vector $h_t$.  We also log the next-token entropy and log-probability at each checkpoint.  Short prefixes are available for all items (1{,}500 slices at $t{=}4$ and $8$), and coverage gradually shrinks as chains terminate (566 examples remain at $t{=}512$).
 
-\subsection{Bias Corrections}
-\paragraph{Carry-forward (CF).} Cumulative-maximum of metrics across $t$ to retain early wins that vanish due to early termination.
-\paragraph{Fixed-subset (FS).} Restrict to items with CoT length $\ge T_{\text{ref}}$; evaluate all $t\le T_{\text{ref}}$ on the \emph{same} items.
+\subsection{Labeling and leakage controls}
+Correctness labels follow \texttt{compute\_correct\_label}.  Gold answers are normalised with \texttt{normalize\_num\_str}, handling boxed LaTeX, decimals, and rationals; model predictions undergo the same pipeline via \texttt{parse\_model\_answer}.  A prefix is discarded if the gold-normalised answer string already appears in its decoded text, or if the model has already closed the \verb|</think>| block.  For the present run no prefix under $t{=}256$ triggers this filter, confirming that early probe accuracy is not driven by trivial leakage.
 
-\subsection{Leakage Audit and Baselines}
-Leak rate vs.\ $t$; baselines from next-token entropy and prefix length.
+\subsection{Linear probe and evaluation protocol}
+Hidden-state features are aggregated per checkpoint and fed to \texttt{run\_all\_probes}.  Each probe performs PCA down to at most 128 components (or fewer when the train split is smaller), then fits an $\ell_2$-regularised logistic regression with \texttt{liblinear}.  We stratify an 80/20 split and balance class weights to offset label skew.  Evaluation reports accuracy and ROC-AUC alongside the class prior in the training fold.  Following \cite{mao2025earlystoppingchainofthoughtslarge}, we additionally compute two bias-aware summaries: (i) a \emph{carry-forward} trace that keeps the best metric observed up to prefix $t$ to account for early halting, and (ii) a \emph{fixed-prefix} subset requiring that all retained examples reach $t{\leq}256$, so every curve is evaluated on identical items.
 
-% ---------- Fig 1 (raw vs CF) ----------
+\subsection{PCA diagnostics visualisation}
+To inspect what the probes learn we retain, for every $t$, the PCA explained-variance profile and the downstream logistic coefficients.  The new \texttt{plot\_probe\_pca\_profile} utility renders these diagnostics using the same muted purple/green palette as \texttt{scripts/plot\_qwen\_difficulty\_hist.py}.  We focus on the prefix with the strongest ROC-AUC and plot variance bars together with signed coefficient magnitudes.  The figure is generated automatically when \texttt{main.py} runs, and the underlying statistics are logged to \texttt{results/\{model\}\_probe\_details.json}.
+
 \begin{figure}[t]
   \centering
-  \figph{Placeholder: \textbf{Fig.~1} AUC/ACC vs prefix length. Solid=raw; dashed=carry-forward. Annotate $p_{\text{pos}}$ along the curve.}
-  \caption{Probe performance vs.\ prefix length: raw (solid) vs.\ carry-forward (dashed).}
-  \label{fig:raw-cf}
+  \IfFileExists{figs/Qwen3-8B_probe_pca.png}{%
+    \makebox[\columnwidth][c]{\includegraphics[width=1.05\columnwidth]{figs/Qwen3-8B_probe_pca.png}}%
+  }{%
+    \figph{Placeholder for PCA$\to$probe diagnostics (best prefix).}%
+  }
+  \caption{Principal-component variance (greens) and logistic weights (purples) for the best-performing probe checkpoint.  Coefficients flip sign around zero, highlighting which latent directions drive predicted correctness.}
+  \label{fig:pca-profile}
 \end{figure}
+
 
 % ---------- 4. Experiments ----------
 \section{Experiments}
 \label{sec:experiments}
 
-\subsection{Setup}
-Models (e.g., Qwen3-8B, Mistral-7B), decoding (greedy), compute, and dataset filters (levels). \todo{Fill concrete IDs and counts.}
+\subsection{Experimental setup}
+All reported numbers come from the balanced MATH split described in \cref{sec:method}.  We run the end-to-end pipeline with Qwen3-8B as the reasoning model, greedy decoding, and the checkpoint grid $t \in \{4,\ldots,512\}$.  Probe features are cached in-memory during the sweep; metrics, baselines, and diagnostics are persisted under \texttt{results/}, and plots under \texttt{figs/}.  Every probe uses the same random seed for the train/test split, so performance differences across $t$ stem only from the available prefixes.  Because long reasoning chains are rarer, the effective sample size drops from 1{,}500 prefixes at $t{=}4$ to 566 at $t{=}512$ (see \cref{tab:stats}).
 
-\subsection{Main Results}
-\paragraph{Early emergence.} High AUC at $t{=}4$--$8$; show CI bands.
-\paragraph{Bias-corrected curves.} CF plateaus early; FS confirms persistence on long-CoT subset.
-
-% ---------- Fig 2 (fixed-subset) ----------
 \begin{figure}[t]
   \centering
-  \figph{Placeholder: \textbf{Fig.~2} Fixed-subset AUC/ACC vs $t$ (only items with CoT length $\ge T_{\text{ref}}$).}
-  \caption{Fixed-subset evaluation disentangles time from survivorship of hard items.}
-  \label{fig:fixed-subset}
+  \IfFileExists{figs/Qwen3-8B_curve_overall.png}{%
+    \makebox[\columnwidth][c]{\includegraphics[width=1.05\columnwidth]{figs/Qwen3-8B_curve_overall.png}}%
+  }{%
+    \figph{Placeholder for overall probe curves.}%
+  }
+  \caption{Overall probe performance per prefix length.  Solid lines show accuracy; markers denote ROC-AUC.}
+  \label{fig:prefix}
 \end{figure}
 
-\subsection{Difficulty Stratification}
-Split by MATH level (e.g., $\le2$ vs.\ $\ge4$); show bar chart of AUC at $t{=}4$ or $8$.
+\subsection{Prefix-wise probe accuracy}
+The probe is already highly predictive after four reasoning tokens: \cref{fig:prefix} shows an ROC-AUC of 0.84 and an accuracy of 0.76 at $t{=}4$.  Accuracy dips slightly at $t{=}8$ before climbing to its peak near $t{=}32$ (0.79 accuracy, 0.86 ROC-AUC).  Longer traces yield noisier statistics because fewer examples survive---beyond $t{=}256$ the label distribution becomes skewed toward incorrect answers as only genuinely hard questions remain.  Applying the carry-forward diagnostic keeps the early AUC plateau at 0.858, and the fixed-prefix subset (requiring availability through $t{=}256$) maintains AUC~$>0.82$, indicating that the strong early signal is not an artifact of shorter solutions exiting the pool.  The carry-forward trend is summarised in \cref{fig:carryforward}.
 
-% ---------- Fig 3 (difficulty bars) ----------
 \begin{figure}[t]
   \centering
-  \figph[1.6in]{Placeholder: \textbf{Fig.~3} Difficulty-stratified AUC at short prefix (bars for easy vs hard).}
-  \caption{Calibration: early hidden states separate success/failure better on easier items.}
+  \IfFileExists{figs/Qwen3-8B_carryforward.png}{%
+    \makebox[\columnwidth][c]{\includegraphics[width=1.05\columnwidth]{figs/Qwen3-8B_carryforward.png}}%
+  }{%
+    \figph{Placeholder for carry-forward analysis.}%
+  }
+  \caption{Raw and carry-forwarded probe metrics.  The dashed curves report the best score observed up to each prefix, mitigating early-stopping bias.}
+  \label{fig:carryforward}
+\end{figure}
+
+\subsection{Difficulty and CoT-length effects}
+Difficulty stratification confirms that the probe mirrors how quickly the base model commits to an answer.  At $t{=}4$ the AUC is 0.77 on easy items and 0.72 on hard items; by $t{=}32$ the gap widens (0.84 vs.\ 0.76).  Hard problems therefore require longer prefixes before their internal state separates correct from incorrect trajectories.  When we additionally condition on long chains (\textit{fixed $\leq\!256$}), the early AUC stays above 0.84, revealing that the information is already present even when we force every example to continue reasoning.  The bar chart in \cref{fig:difficulty} visualises these trends.
+
+\begin{figure}[t]
+  \centering
+  \IfFileExists{figs/Qwen3-8B_difficulty_bar_t4.png}{%
+    \makebox[\columnwidth][c]{\includegraphics[width=1.05\columnwidth]{figs/Qwen3-8B_difficulty_bar_t4.png}}%
+  }{%
+    \figph{Placeholder for difficulty-stratified probe results.}%
+  }
+  \caption{Early prefix performance broken down by difficulty bucket (MATH levels~$\leq2$ vs.\ $\geq4$).}
   \label{fig:difficulty}
 \end{figure}
 
-\subsection{Baselines vs Hidden-State Probe}
-Compare probe to entropy-only, length-only, and entropy+length.
+\subsection{Comparison with output-space baselines}
+Next-token entropy and prefix length provide weak signals relative to the hidden-state probe.  Even when combined (\textit{entropy+length}) the best baseline AUC is 0.59 at $t{=}8$, more than 0.21 below the hidden-state probe at the same prefix.  At the peak around $t{=}32$ the margin widens to 0.39.  These gaps demonstrate that uncertainty heuristics cannot explain the strong latent predictability we observe.  \Cref{fig:baselines} contrasts the curves.
 
-% ---------- Fig 4 (baselines) ----------
 \begin{figure}[t]
   \centering
-  \figph{Placeholder: \textbf{Fig.~4} AUC vs $t$: hidden-state probe vs entropy, length, entropy+length.}
-  \caption{Hidden-state probe outperforms trivial uncertainty/length baselines.}
+  \IfFileExists{figs/Qwen3-8B_baselines.png}{%
+    \makebox[\columnwidth][c]{\includegraphics[width=1.05\columnwidth]{figs/Qwen3-8B_baselines.png}}%
+  }{%
+    \figph{Placeholder for baseline comparison.}%
+  }
+  \caption{Hidden-state probe versus entropy-, length-, and entropy+length-based baselines.}
   \label{fig:baselines}
 \end{figure}
 
-\subsection{Leakage Audit}
-Percent of prefixes dropped due to answer leakage as a function of $t$.
+\subsection{Leakage and coverage}
+No prefixes up to $t{=}256$ contained the final numeric answer or closed the \verb|</think>| tag before the probe checkpoint, so leakage-driven accuracy can be ruled out.  Coverage decreases smoothly with $t$ (e.g., 1{,}347 prefixes at $t{=}32$ and 1{,}026 at $t{=}256$), and the class balance gradually shifts toward incorrect answers, as documented in \cref{tab:stats}.  Forced completions occur in 99.9\% of cases, but because the forced suffix appends only after the final answer token, it does not expose the prediction to earlier checkpoints.
 
-% ---------- Fig 5 (leakage) ----------
-\begin{figure}[t]
-  \centering
-  \figph[1.6in]{Placeholder: \textbf{Fig.~5} Leakage rate vs prefix length.}
-  \caption{Leakage is small at short prefixes; early AUC cannot be explained by visible digits.}
-  \label{fig:leakage}
-\end{figure}
-
-\subsection{Ablations (Optional)}
-Prompt variants; masking digits during teacher-forcing; numeric-only vs symbolic gold; PCA dimension.
+\subsection{Ablations}
+The PCA profile in \cref{fig:pca-profile} shows that most variance---and the largest logistic weights---sit in the first dozen components, motivating a future ablation where we cap PCA at 64 components to confirm that AUC changes by at most a few hundredths.  We also plan to probe prompting variants (e.g., disabling Qwen's thinking mode or masking digits during replay) to disentangle stylistic artifacts from genuine latent calibration; these runs are queued for future work.
 
 % ---------- Table 1 (stats) ----------
 \begin{table}[t]
   \centering
-  \caption{Run statistics.\vspace{2pt}}
+  \caption{Prefix coverage and class balance for Qwen3-8B (train+test counts).}
   \begin{tabular}{lrrr}
   \toprule
   Prefix $t$ & $N$ used & $p_{\text{pos}}$ & Leak \% \\
   \midrule
-  4 & 1700 & 0.62 & 0.6 \\
-  8 & 1700 & 0.62 & 0.9 \\
-  \dots & \dots & \dots & \dots \\
+  4   & 1500 & 0.586 & 0.0 \\
+  8   & 1500 & 0.586 & 0.0 \\
+  16  & 1469 & 0.587 & 0.0 \\
+  32  & 1347 & 0.582 & 0.0 \\
+  64  & 1265 & 0.586 & 0.0 \\
+  128 & 1204 & 0.581 & 0.0 \\
+  192 & 1125 & 0.572 & 0.0 \\
+  256 & 1026 & 0.551 & 0.0 \\
+  384 & 801  & 0.459 & 0.0 \\
+  512 & 566  & 0.316 & 0.0 \\
   \bottomrule
   \end{tabular}
   \label{tab:stats}
@@ -228,28 +271,36 @@ Scope (math domain, greedy decoding), linearity of probes, normalization quirks,
 \label{sec:conclusion}
 We provide a simple, bias-aware protocol showing that latent self-assessment appears within a handful of tokens and persists under fair evaluation.
 
-% ---------- Broader Impact (optional) ----------
-\section*{Broader Impact (Optional)}
-Potential misuse, monitoring, and guardrails for early-exit systems.
-
-% ---------- Acknowledgments (optional) ----------
-\section*{Acknowledgments}
-\todo{Add funding/thanks.}
-
 % ---------- References ----------
 \vspace{-2mm}
 \begingroup
 \small
 \begin{thebibliography}{9}
 
-\bibitem{hendrycks2021math}
-Hendrycks, D., et al.
-\newblock Measuring Mathematical Problem Solving With the MATH Dataset.
-\newblock \emph{NeurIPS}, 2021.
+\bibitem{hendrycksmath2021}
+\textit{Measuring Mathematical Problem Solving With the MATH Dataset.}  \\
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt.  
+NeurIPS, 2021.
+
+\bibitem{openai2024openaio1card}
+\textit{OpenAI o1 System Card}  \\
+OpenAI, et~al. \\
+arXiv preprint arXiv:2412.16720, 2024.  
+
+\bibitem{deepseekai2025deepseekr1incentivizingreasoningcapability}
+\textit{DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning}  \\
+DeepSeek-AI, et~al. \\
+arXiv preprint arXiv:2501.12948, 2025.
+
+\bibitem{mao2025earlystoppingchainofthoughtslarge}
+\textit{Early Stopping Chain-of-thoughts in Large Language Models} \\ 
+Minjia Mao, Bowen Yin, Yu Zhu, Xiao Fang \\
+arXiv:2509.14004, 2025.
 
 % \bibitem{...} Add more.
 
 \end{thebibliography}
+
 \endgroup
 
 % ---------- Appendix (optional) ----------

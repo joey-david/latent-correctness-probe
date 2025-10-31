@@ -34,6 +34,14 @@ def build_probe_data(
     for idx, ex in enumerate(math_data[:max_items], start=1):
         question = ex["problem"]
         cot_info = generate_cot(model, tokenizer, question)
+        gen_token_ids = cot_info["gen_token_ids"]
+        gen_token_list = gen_token_ids.tolist()
+        answer_text = cot_info.get("answer_text") or ""
+        answer_len_tokens = len(gen_token_list)
+        answer_len_chars = len(answer_text)
+        last_token_ids = gen_token_list[-4:] if answer_len_tokens >= 4 else gen_token_list
+        last_token_pieces = tokenizer.convert_ids_to_tokens(last_token_ids)
+        last_token_text = tokenizer.convert_tokens_to_string(last_token_pieces).strip()
         label = compute_correct_label(ex, cot_info["model_ans_norm"])
         num_correct += int(label)
         forced = bool(cot_info.get("forced_completion", False))
@@ -110,6 +118,11 @@ def build_probe_data(
                 "difficulty_bin": ex.get("difficulty_bin"),
                 "think_text": cot_info.get("think_text"),
                 "answer_text": cot_info.get("answer_text"),
+                "answer_len_tokens": answer_len_tokens,
+                "answer_len_chars": answer_len_chars,
+                "last_token_ids": last_token_ids,
+                "last_token_pieces": last_token_pieces,
+                "last_token_text": last_token_text,
                 "prefix_states": prefix_states,
                 "forced_completion": forced,
             }

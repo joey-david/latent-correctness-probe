@@ -1,4 +1,5 @@
 import argparse
+import gc
 import json
 from collections import Counter
 from typing import Any, Dict, List
@@ -8,6 +9,11 @@ from pathlib import Path
 
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+import torch
+
+from huggingface_hub import HfApi
+from huggingface_hub.utils import HfHubHTTPError
 
 from analysis import analyze_baselines, analyze_carryforward, analyze_difficulty_buckets
 from collect_dataset import build_probe_data
@@ -19,6 +25,7 @@ from plotting import (
     plot_difficulty_bar,
     plot_multiple_probe_results,
     plot_probe_results,
+    plot_probe_pca_profile,
 )
 from probes import run_all_probes, run_probes_from_meta
 
@@ -26,6 +33,52 @@ from probes import run_all_probes, run_probes_from_meta
 RESULTS_DIR = Path("results")
 FIGS_DIR = Path("figs")
 RUNS_DIR = Path("runs")
+
+
+def normalise_model_tag(model_id: str) -> str:
+    """
+    Turn a Hugging Face model ID into a filesystem-friendly tag.
+    """
+    safe = model_id.strip().replace(" ", "_")
+    for token in ("/", ":", "@"):
+        safe = safe.replace(token, "__")
+    return safe
+
+
+def resolve_model_ids(args) -> List[str]:
+    explicit: List[str] = []
+    if args.model_ids:
+        explicit.extend(args.model_ids)
+    if args.model_ids_csv:
+        explicit.extend(
+            token.strip() for token in args.model_ids_csv.split(",") if token.strip()
+        )
+    if not explicit:
+        explicit.append("Qwen/Qwen3-8B")
+    return explicit
+
+
+def validate_model_ids(model_ids: List[str]) -> None:
+    """
+    Ensure every requested model is available on Hugging Face before we spend
+    time loading data or launching long-running jobs.
+    """
+    api = HfApi()
+    failures: List[str] = []
+    for model_id in model_ids:
+        try:
+            api.model_info(model_id)
+        except HfHubHTTPError as exc:
+            failures.append(f"{model_id}: {exc}")
+        except Exception as exc:  # covers connection errors and auth issues
+            failures.append(f"{model_id}: {exc}")
+    if failures:
+        formatted = " | ".join(failures)
+        raise RuntimeError(
+            "Model validation failed. Unable to access the following Hugging Face "
+            f"model(s): {formatted}. Please verify the identifiers, your network "
+            "connection, and (if needed) HF credentials."
+        )
 
 
 def load_model(model_id: str):
@@ -131,6 +184,24 @@ def _prepare_example_record(idx: int, example: Dict[str, Any]) -> Dict[str, Any]
         "next_token_entropy": {str(k): v for k, v in sorted(entropies.items())},
         "next_token_logprob": {str(k): v for k, v in sorted(logprobs.items())},
     }
+
+    answer_len_tokens = example.get("answer_len_tokens")
+    if answer_len_tokens is not None:
+        record["answer_len_tokens"] = int(answer_len_tokens)
+    answer_len_chars = example.get("answer_len_chars")
+    if answer_len_chars is not None:
+        record["answer_len_chars"] = int(answer_len_chars)
+
+    last_token_ids = example.get("last_token_ids")
+    if last_token_ids is not None:
+        record["last_token_ids"] = [int(token) for token in last_token_ids]
+    last_token_pieces = example.get("last_token_pieces")
+    if last_token_pieces is not None:
+        record["last_token_pieces"] = list(last_token_pieces)
+    last_token_text = example.get("last_token_text")
+    if last_token_text is not None:
+        record["last_token_text"] = str(last_token_text)
+
     return record
 
 
@@ -161,7 +232,16 @@ def serialise_metrics_by_t(metrics_by_t: Dict[int, Dict[str, Any]]) -> Dict[str,
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--model-id", default="Qwen/Qwen3-8B", help="HF model identifier"
+        "--model-id",
+        dest="model_ids",
+        action="append",
+        help="HF model identifier to evaluate; repeat for multiple models.",
+    )
+    parser.add_argument(
+        "--model-ids",
+        dest="model_ids_csv",
+        type=str,
+        help="Comma-separated list of HF model identifiers to evaluate.",
     )
     parser.add_argument(
         "--total-examples",
@@ -208,6 +288,250 @@ def parse_args():
     return parser.parse_args()
 
 
+def run_pipeline_for_model(
+    model_id: str,
+    balanced_examples: List[Dict[str, Any]],
+    args,
+    log_line,
+) -> None:
+    tag = normalise_model_tag(model_id)
+    prefix = f"[{tag}] "
+
+    def log(message: str) -> None:
+        log_line(f"{prefix}{message}")
+
+    print(f"[{tag}] Loading model '{model_id}'...")
+    log(f"Loading model '{model_id}'")
+    model, tokenizer = load_model(model_id)
+    try:
+        print(f"[{tag}] Collecting hidden states...")
+        log("Collecting hidden states...")
+        total_examples = len(balanced_examples)
+        log(f"Processing {total_examples} difficulty-balanced examples.")
+        with tqdm(
+            total=total_examples,
+            desc=f"{tag}: Collecting hidden states",
+            unit="example",
+        ) as progress:
+            features_by_t, labels_by_t, per_example_meta = build_probe_data(
+                model,
+                tokenizer,
+                balanced_examples,
+                max_items=total_examples,
+                progress_bar=progress,
+                print_prefixes=args.print_prefixes,
+                log_fn=log,
+            )
+        log("Finished collecting hidden states.")
+
+        ensure_output_dirs()
+
+        examples_path = RUNS_DIR / f"{tag}_examples.jsonl"
+        write_examples_jsonl(per_example_meta, examples_path)
+        log(f"Saved per-example metadata to {examples_path}")
+        for t in sorted(features_by_t.keys()):
+            n_total = len(labels_by_t[t])
+            pos = int(sum(labels_by_t[t])) if n_total else 0
+            log(f"Checkpoint t={t}: n={n_total}, pos={pos}")
+        probe_results, probe_details = run_all_probes(
+            features_by_t,
+            labels_by_t,
+            capture_details=True,
+        )
+        for t, metrics in sorted(probe_results.items()):
+            log(f"Probe t={t}: {metrics}")
+        if not probe_results:
+            log("No probe results available (insufficient data).")
+        subset_results = {"overall": probe_results}
+
+        def log_subset(name: str, labels_dict: dict, indices: List[int]) -> None:
+            base_acc = compute_base_accuracy(per_example_meta, indices)
+            log(
+                f"Subset '{name}': examples={len(indices)} base_acc={base_acc:.3f}"
+            )
+            for step in sorted(labels_dict.keys()):
+                count = len(labels_dict[step])
+                if count == 0:
+                    continue
+                pos = int(sum(labels_dict[step]))
+                log(f"  t={step}: n={count}, pos={pos}")
+
+        all_indices = list(range(len(per_example_meta)))
+        log_subset("overall", labels_by_t, all_indices)
+
+        easy_metrics, easy_labels_by_t, easy_indices = run_probes_from_meta(
+            per_example_meta,
+            checkpoints=CHECKPOINT_STEPS,
+            filter_fn=lambda ex: ex.get("difficulty_bin") == "easy",
+            seed=args.balance_seed,
+        )
+        subset_results["easy"] = easy_metrics
+
+        hard_metrics, hard_labels_by_t, hard_indices = run_probes_from_meta(
+            per_example_meta,
+            checkpoints=CHECKPOINT_STEPS,
+            filter_fn=lambda ex: ex.get("difficulty_bin") == "hard",
+            seed=args.balance_seed,
+        )
+        subset_results["hard"] = hard_metrics
+
+        log_subset("easy", easy_labels_by_t, easy_indices)
+        log_subset("hard", hard_labels_by_t, hard_indices)
+
+        fixed_metrics = {}
+        fixed_labels_by_t = {}
+        fixed_indices: List[int] = []
+        if not args.skip_fixed_subset:
+            required_ts = [t for t in CHECKPOINT_STEPS if t <= args.fixed_prefix_max]
+            if required_ts:
+                (
+                    fixed_metrics,
+                    fixed_labels_by_t,
+                    fixed_indices,
+                ) = run_probes_from_meta(
+                    per_example_meta,
+                    checkpoints=CHECKPOINT_STEPS,
+                    required_ts=required_ts,
+                    seed=args.balance_seed,
+                )
+                fixed_key = f"fixed<={args.fixed_prefix_max}"
+                subset_results[fixed_key] = fixed_metrics
+                log_subset(
+                    fixed_key,
+                    fixed_labels_by_t,
+                    fixed_indices,
+                )
+            else:
+                log(
+                    "Fixed subset skipped because no checkpoints fall under the threshold."
+                )
+
+        overall_plot_path = FIGS_DIR / f"{tag}_curve_overall.png"
+        plot_probe_results(
+            probe_results,
+            title=f"{tag} correctness probe vs prefix length",
+            outpath=overall_plot_path,
+        )
+        log(f"Saved overall probe plot to {overall_plot_path}")
+
+        multi_out_path = FIGS_DIR / f"{tag}_difficulty_curves.png"
+        plot_multiple_probe_results(
+            subset_results,
+            title=f"{tag} probe performance by subset",
+            outpath=multi_out_path,
+        )
+        log(f"Saved stratified probe plot to {multi_out_path}")
+
+        pretty_print_results(f"{tag} overall", probe_results)
+        pretty_print_results(f"{tag} easy", easy_metrics)
+        pretty_print_results(f"{tag} hard", hard_metrics)
+        if fixed_metrics:
+            pretty_print_results(f"{tag} fixed<={args.fixed_prefix_max}", fixed_metrics)
+
+        raw_results_path = RESULTS_DIR / f"{tag}_raw_per_t.json"
+        raw_results_path.write_text(
+            json.dumps(serialise_metrics_by_t(probe_results), indent=2) + "\n",
+            encoding="utf-8",
+        )
+        log(f"Saved per-prefix metrics to {raw_results_path}")
+
+        if probe_details:
+            details_payload = {
+                str(t): info for t, info in sorted(probe_details.items())
+            }
+            details_path = RESULTS_DIR / f"{tag}_probe_details.json"
+            details_path.write_text(
+                json.dumps(details_payload, indent=2) + "\n", encoding="utf-8"
+            )
+            log(f"Saved probe diagnostics to {details_path}")
+
+            best_t = None
+            best_auc = float("-inf")
+            for t, metrics in probe_results.items():
+                auc = metrics.get("auc")
+                if auc is None:
+                    continue
+                if auc > best_auc:
+                    best_auc = auc
+                    best_t = t
+
+            if best_t is not None:
+                diag_info = probe_details.get(best_t)
+                if diag_info:
+                    pca_fig_path = FIGS_DIR / f"{tag}_probe_pca.png"
+                    plot_probe_pca_profile(
+                        prefix_len=best_t,
+                        details=diag_info,
+                        metrics=probe_results[best_t],
+                        outpath=pca_fig_path,
+                    )
+                    log(f"Saved PCA profile plot (t={best_t}) to {pca_fig_path}")
+
+        results_payload = {
+            name: serialise_metrics_by_t(res)
+            for name, res in subset_results.items()
+            if res
+        }
+        results_path = RESULTS_DIR / f"{tag}_subsets.json"
+        results_path.write_text(
+            json.dumps(results_payload, indent=2) + "\n", encoding="utf-8"
+        )
+        log(f"Persisted combined subset results to {results_path}")
+
+        carry_fig_path = FIGS_DIR / f"{tag}_carryforward.png"
+        carry_data = analyze_carryforward(
+            probe_results,
+            fig_path=carry_fig_path,
+            title=f"{tag} carry-forward correction",
+            plot_fn=plot_carryforward_curves,
+            log_fn=log,
+        )
+        if carry_data:
+            log(
+                "Carry-forward max metrics: "
+                f"auc={max(carry_data['carry_auc']):.3f} acc={max(carry_data['carry_acc']):.3f}"
+            )
+
+        difficulty_t = 4
+        difficulty_fig_path = FIGS_DIR / f"{tag}_difficulty_bar_t{difficulty_t}.png"
+        difficulty_results_path = RESULTS_DIR / f"{tag}_difficulty_t{difficulty_t}.json"
+        difficulty_payload = analyze_difficulty_buckets(
+            per_example_meta,
+            target_t=difficulty_t,
+            seed=args.balance_seed,
+            fig_path=difficulty_fig_path,
+            results_path=difficulty_results_path,
+            plot_fn=plot_difficulty_bar,
+            log_fn=log,
+        )
+        if difficulty_payload:
+            log(f"Difficulty stratification saved to {difficulty_results_path}")
+            print(f"[{tag}] Difficulty metrics (t={difficulty_t}):")
+            print(json.dumps(difficulty_payload, indent=2))
+
+        baselines_fig_path = FIGS_DIR / f"{tag}_baselines.png"
+        baselines_results_path = RESULTS_DIR / f"{tag}_baselines_per_t.json"
+        baseline_payload = analyze_baselines(
+            per_example_meta,
+            probe_results=probe_results,
+            seed=args.balance_seed,
+            fig_path=baselines_fig_path,
+            results_path=baselines_results_path,
+            plot_fn=plot_baseline_comparison,
+            log_fn=log,
+        )
+        if baseline_payload:
+            log(f"Baseline comparison saved to {baselines_results_path}")
+
+        log("Model evaluation completed successfully.")
+    finally:
+        del model
+        del tokenizer
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
 def main():
     args = parse_args()
 
@@ -225,10 +549,13 @@ def main():
         log_line = make_logger(log_file)
         easy_levels = parse_level_list(args.easy_levels)
         hard_levels = parse_level_list(args.hard_levels)
-        total_examples = args.total_examples
+        requested_examples = args.total_examples
+        model_ids = resolve_model_ids(args)
+        validate_model_ids(model_ids)
+        model_list_str = ", ".join(model_ids)
         log_line(
             "=== Run started === "
-            f"model={args.model_id} total_examples={total_examples} "
+            f"models=[{model_list_str}] total_examples={requested_examples} "
             f"easy_levels={easy_levels} hard_levels={hard_levels} "
             f"balance_seed={args.balance_seed} fixed_prefix_max={args.fixed_prefix_max} "
             f"skip_fixed_subset={args.skip_fixed_subset} print_prefixes={args.print_prefixes}"
@@ -238,11 +565,11 @@ def main():
         require_numeric = True  # drop examples whose gold answer cannot be normalized
 
         try:
-            if total_examples <= 0:
+            if requested_examples <= 0:
                 log_line("Requested total_examples <= 0; exiting early.")
                 print("No examples requested; exiting.")
                 return
-            if total_examples % 2 != 0:
+            if requested_examples % 2 != 0:
                 raise ValueError("total_examples must be even for balanced sampling")
 
             ensure_output_dirs()
@@ -258,7 +585,7 @@ def main():
 
             balanced_examples = sample_balanced_by_difficulty(
                 math_train,
-                total=total_examples,
+                total=requested_examples,
                 easy_levels=easy_levels,
                 hard_levels=hard_levels,
                 seed=args.balance_seed,
@@ -272,186 +599,17 @@ def main():
                 f"difficulty_counts={dict(difficulty_counts)} level_counts={dict(level_counts)}"
             )
 
-            model_id = args.model_id
-            tag = model_id.split("/")[-1]
-
-            print(f"Loading model '{model_id}'...")
-            log_line(f"Loading model '{model_id}'")
-            model, tokenizer = load_model(model_id)
-            print("Collecting hidden states...")
-            log_line("Collecting hidden states...")
-            total_examples = len(balanced_examples)
-            log_line(f"Processing {total_examples} difficulty-balanced examples.")
-            with tqdm(
-                total=total_examples,
-                desc="Collecting hidden states",
-                unit="example",
-            ) as progress:
-                features_by_t, labels_by_t, per_example_meta = build_probe_data(
-                    model,
-                    tokenizer,
-                    balanced_examples,
-                    max_items=total_examples,
-                    progress_bar=progress,
-                    print_prefixes=args.print_prefixes,
-                    log_fn=log_line,
+            log_line(
+                f"Evaluating {len(model_ids)} model(s): {model_list_str}"
+            )
+            for idx, model_id in enumerate(model_ids, start=1):
+                log_line(f"--- Model {idx}/{len(model_ids)}: {model_id} ---")
+                run_pipeline_for_model(
+                    model_id=model_id,
+                    balanced_examples=balanced_examples,
+                    args=args,
+                    log_line=log_line,
                 )
-            log_line("Finished collecting hidden states.")
-
-            examples_path = RUNS_DIR / f"{tag}_examples.jsonl"
-            write_examples_jsonl(per_example_meta, examples_path)
-            log_line(f"Saved per-example metadata to {examples_path}")
-            for t in sorted(features_by_t.keys()):
-                n_total = len(labels_by_t[t])
-                pos = int(sum(labels_by_t[t])) if n_total else 0
-                log_line(f"Checkpoint t={t}: n={n_total}, pos={pos}")
-            probe_results = run_all_probes(features_by_t, labels_by_t)
-            for t, metrics in sorted(probe_results.items()):
-                log_line(f"Probe t={t}: {metrics}")
-            if not probe_results:
-                log_line("No probe results available (insufficient data).")
-            subset_results = {"overall": probe_results}
-
-            def log_subset(name: str, labels_dict: dict, indices: List[int]) -> None:
-                base_acc = compute_base_accuracy(per_example_meta, indices)
-                log_line(
-                    f"Subset '{name}': examples={len(indices)} base_acc={base_acc:.3f}"
-                )
-                for step in sorted(labels_dict.keys()):
-                    count = len(labels_dict[step])
-                    if count == 0:
-                        continue
-                    pos = int(sum(labels_dict[step]))
-                    log_line(f"  t={step}: n={count}, pos={pos}")
-
-            log_subset("overall", labels_by_t, list(range(len(per_example_meta))))
-
-            easy_metrics, easy_labels_by_t, easy_indices = run_probes_from_meta(
-                per_example_meta,
-                checkpoints=CHECKPOINT_STEPS,
-                filter_fn=lambda ex: ex.get("difficulty_bin") == "easy",
-                seed=args.balance_seed,
-            )
-            subset_results["easy"] = easy_metrics
-
-            hard_metrics, hard_labels_by_t, hard_indices = run_probes_from_meta(
-                per_example_meta,
-                checkpoints=CHECKPOINT_STEPS,
-                filter_fn=lambda ex: ex.get("difficulty_bin") == "hard",
-                seed=args.balance_seed,
-            )
-            subset_results["hard"] = hard_metrics
-
-            log_subset("easy", easy_labels_by_t, easy_indices)
-            log_subset("hard", hard_labels_by_t, hard_indices)
-
-            fixed_metrics = {}
-            fixed_labels_by_t = {}
-            fixed_indices: List[int] = []
-            if not args.skip_fixed_subset:
-                required_ts = [t for t in CHECKPOINT_STEPS if t <= args.fixed_prefix_max]
-                if required_ts:
-                    fixed_metrics, fixed_labels_by_t, fixed_indices = run_probes_from_meta(
-                        per_example_meta,
-                        checkpoints=CHECKPOINT_STEPS,
-                        required_ts=required_ts,
-                        seed=args.balance_seed,
-                    )
-                    fixed_key = f"fixed<={args.fixed_prefix_max}"
-                    subset_results[fixed_key] = fixed_metrics
-                    log_subset(
-                        fixed_key,
-                        fixed_labels_by_t,
-                        fixed_indices,
-                    )
-                else:
-                    log_line(
-                        "Fixed subset skipped because no checkpoints fall under the threshold."
-                    )
-
-            overall_plot_path = FIGS_DIR / f"{tag}_curve_overall.png"
-            plot_probe_results(
-                probe_results,
-                title=f"{tag} correctness probe vs prefix length",
-                outpath=overall_plot_path,
-            )
-            log_line(f"Saved overall probe plot to {overall_plot_path}")
-
-            multi_out_path = FIGS_DIR / f"{tag}_difficulty_curves.png"
-            plot_multiple_probe_results(
-                subset_results,
-                title=f"{tag} probe performance by subset",
-                outpath=multi_out_path,
-            )
-            log_line(f"Saved stratified probe plot to {multi_out_path}")
-
-            pretty_print_results(f"{tag} overall", probe_results)
-            pretty_print_results(f"{tag} easy", easy_metrics)
-            pretty_print_results(f"{tag} hard", hard_metrics)
-            if fixed_metrics:
-                pretty_print_results(f"{tag} fixed<={args.fixed_prefix_max}", fixed_metrics)
-
-            raw_results_path = RESULTS_DIR / f"{tag}_raw_per_t.json"
-            raw_results_path.write_text(
-                json.dumps(serialise_metrics_by_t(probe_results), indent=2) + "\n",
-                encoding="utf-8",
-            )
-            log_line(f"Saved per-prefix metrics to {raw_results_path}")
-
-            results_payload = {
-                name: serialise_metrics_by_t(res)
-                for name, res in subset_results.items()
-                if res
-            }
-            results_path = RESULTS_DIR / f"{tag}_subsets.json"
-            results_path.write_text(json.dumps(results_payload, indent=2) + "\n", encoding="utf-8")
-            log_line(f"Persisted combined subset results to {results_path}")
-
-            carry_fig_path = FIGS_DIR / f"{tag}_carryforward.png"
-            carry_data = analyze_carryforward(
-                probe_results,
-                fig_path=carry_fig_path,
-                title=f"{tag} carry-forward correction",
-                plot_fn=plot_carryforward_curves,
-                log_fn=log_line,
-            )
-            if carry_data:
-                log_line(
-                    "Carry-forward max metrics: "
-                    f"auc={max(carry_data['carry_auc']):.3f} acc={max(carry_data['carry_acc']):.3f}"
-                )
-
-            difficulty_t = 4
-            difficulty_fig_path = FIGS_DIR / f"{tag}_difficulty_bar_t{difficulty_t}.png"
-            difficulty_results_path = RESULTS_DIR / f"{tag}_difficulty_t{difficulty_t}.json"
-            difficulty_payload = analyze_difficulty_buckets(
-                per_example_meta,
-                target_t=difficulty_t,
-                seed=args.balance_seed,
-                fig_path=difficulty_fig_path,
-                results_path=difficulty_results_path,
-                plot_fn=plot_difficulty_bar,
-                log_fn=log_line,
-            )
-            if difficulty_payload:
-                log_line(f"Difficulty stratification saved to {difficulty_results_path}")
-                print(f"Difficulty metrics (t={difficulty_t}):")
-                print(json.dumps(difficulty_payload, indent=2))
-
-            baselines_fig_path = FIGS_DIR / f"{tag}_baselines.png"
-            baselines_results_path = RESULTS_DIR / f"{tag}_baselines_per_t.json"
-            baseline_payload = analyze_baselines(
-                per_example_meta,
-                probe_results=probe_results,
-                seed=args.balance_seed,
-                fig_path=baselines_fig_path,
-                results_path=baselines_results_path,
-                plot_fn=plot_baseline_comparison,
-                log_fn=log_line,
-            )
-            if baseline_payload:
-                log_line(f"Baseline comparison saved to {baselines_results_path}")
-
             log_line("Run completed successfully.")
         except Exception as exc:
             log_line(f"Run failed with error: {exc!r}")

@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 from sklearn.decomposition import PCA
@@ -102,7 +102,12 @@ def run_probes_from_meta(
     return metrics, labels_by_t, indices
 
 
-def train_eval_probe(features: np.ndarray, labels: np.ndarray, seed: int = 42):
+def train_eval_probe(
+    features: np.ndarray,
+    labels: np.ndarray,
+    seed: int = 42,
+    capture_details: bool = False,
+):
     """
     Fit a simple linear probe (PCA -> logistic regression) and report metrics.
     """
@@ -144,20 +149,40 @@ def train_eval_probe(features: np.ndarray, labels: np.ndarray, seed: int = 42):
     except ValueError:
         auc = float("nan")
 
-    return {
+    metrics = {
         "acc": acc,
         "auc": auc,
         "n_train": len(y_train),
         "n_test": len(y_test),
         "p_pos": float(np.mean(labels)),
     }
+    if not capture_details:
+        return metrics
+
+    details = {
+        "n_components": int(getattr(pca, "n_components_", pca_dim)),
+        "explained_variance_ratio": pca.explained_variance_ratio_.astype(float).tolist(),
+        "cumulative_variance": np.cumsum(pca.explained_variance_ratio_).astype(float).tolist(),
+        "logit_coefficients": clf.coef_.astype(float).ravel().tolist(),
+        "logit_intercept": float(clf.intercept_[0]),
+    }
+    return metrics, details
 
 
-def run_all_probes(features_by_t, labels_by_t, seed: int = 42) -> Dict[int, Dict[str, float]]:
+def run_all_probes(
+    features_by_t,
+    labels_by_t,
+    seed: int = 42,
+    capture_details: bool = False,
+) -> Union[
+    Dict[int, Dict[str, float]],
+    Tuple[Dict[int, Dict[str, float]], Dict[int, Dict[str, Any]]],
+]:
     """
     Train a separate linear probe at each checkpoint using the collected features.
     """
     results: Dict[int, Dict[str, float]] = {}
+    details: Optional[Dict[int, Dict[str, Any]]] = {} if capture_details else None
     for t in sorted(features_by_t.keys()):
         feats_list = features_by_t[t]
         labs_list = labels_by_t[t]
@@ -167,7 +192,18 @@ def run_all_probes(features_by_t, labels_by_t, seed: int = 42) -> Dict[int, Dict
         X = np.stack(feats_list, axis=0)
         y = np.array(labs_list)
 
-        metrics = train_eval_probe(X, y, seed=seed)
-        if metrics is not None:
-            results[t] = metrics
+        outcome = train_eval_probe(X, y, seed=seed, capture_details=capture_details)
+        if outcome is None:
+            continue
+        if capture_details:
+            metrics, info = outcome
+            if metrics is not None:
+                results[t] = metrics
+                if info is not None and details is not None:
+                    details[t] = info
+        else:
+            results[t] = outcome
+
+    if capture_details:
+        return results, details or {}
     return results
