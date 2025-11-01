@@ -13,7 +13,7 @@ from typing import Dict
 import matplotlib.pyplot as plt
 import numpy as np
 
-DATA_PATH = Path("runs/Qwen3-8B_examples.jsonl")
+DATA_PATH = Path("runs/Qwen__Qwen3-8B_examples.jsonl")
 OUTPUT_PATH = Path("figs/qwen_level_metrics.png")
 STYLE_COLOR = "#3f4042"
 STYLE_FONT = "newpx"

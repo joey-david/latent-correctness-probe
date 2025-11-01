@@ -1,121 +1,139 @@
 # Latent Correctness Probe
 
-This repo measures whether a reasoning language model already "knows" if it will solve a *hard* math problem correctly before finishing its chain-of-thought. For two instruction-tuned models (Qwen3-8B and Llama-3.1-8B-Instruct) we:
+This repository packages the code used to study how early a reasoning model internally commits to a correct answer during chain-of-thought generation. The workflow is organised into two Python packages:
 
-- Decode greedy chain-of-thought answers on **Hendrycks MATH (NeurIPS 2021)** problems.
-- Snapshot the model's last hidden state after the first `t` reasoning tokens (`t ∈ {1,2,4,8,16,32,64,128}`).
-- Train a linear probe (PCA → Logistic Regression) to predict whether the eventual final answer is correct.
-- Plot probe accuracy and ROC-AUC versus reasoning prefix length.
+- `src/probing/`: data loading, prompting, hidden-state extraction, and probe training.
+- `src/plotting/`: Matplotlib helpers for visualising probe metrics and diagnostics.
 
-If probe performance rises with `t`, it suggests the internal representation already encodes correctness before the model finishes reasoning.
+Cached generations (JSONL in `runs/`) and derived metrics (JSON/png in `results/` and `figs/`) can be regenerated or inspected with the utilities below.
 
-## Assumptions & Limitations
-
-- Greedy decoding only; no sampling or self-consistency.
-- Gold answers are pulled from the final `\boxed{…}` in the official MATH solutions. By default we keep only problems whose boxed answer normalises to a numeric string (override if you want symbolic targets).
-- Predictions are parsed by first looking for a final `\boxed{…}` in the model output, falling back to the last numeric literal in the text.
-- Only prefixes up to 192 tokens are considered to avoid very long forwards.
-- Prefixes that already contain the final numeric answer are skipped to prevent label leakage.
-
-## Quickstart
+## Getting Started
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-python main.py
+export PYTHONPATH="$PWD/src:$PYTHONPATH"
 ```
 
-By default this will evaluate both `Qwen/Qwen3-8B` and `meta-llama/Llama-3.1-8B-Instruct`. To compare additional models in a single run, repeat `--model-id` (or pass `--model-ids` with a comma-separated list):
+Setting `PYTHONPATH` (or running scripts with `PYTHONPATH=src`) makes the packages importable as `import probing` and `import plotting`.
 
-```bash
-python main.py \
-  --model-id Qwen/Qwen3-8B \
-  --model-id meta-llama/Llama-3.1-8B-Instruct \
-  --model-id mistralai/Mistral-7B-Instruct-v0.3
-```
+## Typical Workflow
 
-### 1. Prepare Hendrycks MATH data
+1. **Load Hendrycks MATH examples**
 
-The default pipeline loads MATH directly from Hugging Face using `datasets.load_dataset`. If you prefer to cache JSONL files (e.g., for offline runs) use:
+   ```python
+   from probing.data import load_math_split
 
-```bash
-python scripts/prepare_math.py --min-level 1 --out-train data/math_train.jsonl --out-test data/math_test.jsonl
-```
-
-This utility concatenates all seven subjects (`algebra`, `counting_and_probability`, `geometry`, `intermediate_algebra`, `number_theory`, `prealgebra`, `precalculus`) and filters to examples whose answers can be normalised. Adjust `--subjects`, `--min-level`, `--keep-non-numeric`, or `--max-items` for custom subsets.
-
-`main.py` consumes the dataset through `load_math_split(...)`, so the JSONLs are optional.
-
-### 2. Configure model checkpoints
-
-`main.py` evaluates `Qwen/Qwen3-8B` and `meta-llama/Llama-3.1-8B-Instruct` by default. Provide `--model-id` flags to override or add more checkpoints. Each model is processed in turn while sharing the same difficulty-balanced dataset, so you can gather comparative results in a single run:
-
-```bash
-python main.py \
-  --model-id Qwen/Qwen3-8B \
-  --model-id meta-llama/Llama-3.1-8B-Instruct
-```
-
-We follow each vendor's recommended prompt format: Qwen runs with `<think>...</think>` enabled via its chat template, while Llama-3.1 uses the official chat template with `add_generation_prompt=True` and an explicit request for step-by-step reasoning plus a boxed final answer.
-
-Models load with `device_map="auto"` and `torch_dtype="auto"` (typically BF16/FP16 on GPU). Ensure the target GPU has enough VRAM to hold the largest model you request; running two 8B models back-to-back fits comfortably on a 40 GB A100.
-
-### 3. Expected outputs
-
-Running `python main.py` will:
-
-1. Load MATH training data (respecting the `min_level` and numeric filter in `main.py`).
-2. Decode CoT answers for each example with every requested model.
-3. Collect hidden states at every checkpoint (skipping leaky prefixes).
-4. Train logistic probes and evaluate with a train/test split.
-5. Print metrics dictionary per prefix length, e.g.:
-
-   ```json
-   {
-     "1": {"acc": 0.55, "auc": 0.57, "...": "..."},
-     "2": {...},
-     "4": {...}
-   }
+   math_examples = load_math_split(
+       split="train",
+       min_level=1,
+       require_numeric=True,
+   )
    ```
 
-6. Save plots in `figs/` such as:
-   - `<model_tag>_curve_overall.png`
-   - `<model_tag>_difficulty_curves.png`
+   The helpers in `probing.data` normalise boxed answers and filter to numeric targets.
 
-`model_tag` is the model identifier with `/`, `@`, and `:` replaced by `__`. Each plot shows ROC-AUC and accuracy versus prefix length.
+2. **Generate chains of thought and cache prefix states**
 
-## Docker GPU Inference
+   ```python
+   from transformers import AutoModelForCausalLM, AutoTokenizer
+   from probing.collection import build_probe_data
+   from probing.config import CHECKPOINT_STEPS, MAX_NEW_TOKENS
 
-Use the provided `Dockerfile` to ship the probe to a GPU box that only accepts container jobs.
+   model_id = "Qwen/Qwen3-8B"
+   tokenizer = AutoTokenizer.from_pretrained(model_id)
+   model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto")
 
-1. Build the image (from the repo root):
-   ```bash
-   docker build -t latent-correctness-probe .
-   ```
-2. Launch a run, mounting the working directories you want to persist and passing any model flags. Include `--gpus all` (or `--gpus device=0`) on CUDA hosts:
-   ```bash
-   docker run --rm --gpus all \
-     -v $PWD/results:/app/results \
-     -v $PWD/runs:/app/runs \
-     -v $PWD/figs:/app/figs \
-     -e HF_HOME=/app/.cache/huggingface \
-     latent-correctness-probe \
-     --model-id Qwen/Qwen3-8B \
-     --model-id meta-llama/Llama-3.1-8B-Instruct \
-     --total-examples 100
+   features_by_t, labels_by_t, per_example_meta = build_probe_data(
+       model=model,
+       tokenizer=tokenizer,
+       math_data=math_examples,
+       max_items=1500,
+   )
    ```
 
-Mount an existing Hugging Face cache (e.g., `-v $HOME/.cache/huggingface:/app/.cache/huggingface`) to avoid re-downloading large checkpoints. Provide `HF_TOKEN` via `-e HF_TOKEN=...` if the models require authentication.
+   `build_probe_data` uses the model-specific prompt templates in `probing.generation` and extracts hidden states with `probing.features`. Non-leaky prefixes and auxiliary metadata are returned for later analysis.
 
-## File Overview
+3. **Train probes and analyse baselines**
 
-- `core_deps.py`: shared imports, constants, random seeds.
-- `data.py`: Hendrycks MATH helpers (boxed answer parsing, dataset loading, numeric normalisation).
-- `gen.py`: prompt builder and greedy chain-of-thought generation.
-- `labels.py`: binary correctness label computation.
-- `features.py`: prefix hidden-state extraction with leakage checks.
-- `collect_dataset.py`: loop over data to build probe-ready datasets.
-- `probes.py`: PCA + logistic regression probes and evaluation.
-- `plotting.py`: matplotlib plot helper for probe curves.
-- `scripts/prepare_math.py`: optional utility to dump MATH JSONL files.
-- `main.py`: end-to-end script (load data/models, build dataset, train probes).
-- `requirements.txt`: Python dependencies.
+   ```python
+   from probing.probes import run_all_probes
+   from probing.analysis import analyze_baselines
+   from pathlib import Path
+
+   metrics = run_all_probes(features_by_t, labels_by_t, seed=356)
+
+   analyze_baselines(
+       per_example_meta=per_example_meta,
+       probe_results=metrics,
+       seed=356,
+       fig_path=Path("figs/qwen/baselines.png"),
+       results_path=Path("results/qwen/baselines.json"),
+       plot_fn=lambda steps, curves, title, path, _: None,  # hook up plotting later
+   )
+   ```
+
+   The analysis module offers convenience wrappers for difficulty splits and entropy/length baselines.
+
+4. **Plot results**
+
+   ```python
+   from plotting import plot_probe_results, plot_baseline_comparison
+   from pathlib import Path
+
+   plot_probe_results(metrics, title="Qwen3-8B probe", outpath="figs/qwen_curve_overall.png")
+
+   baseline_records = Path("results/qwen/baselines.json").read_text()
+   # ... load JSON and pass to plot_baseline_comparison if you captured it earlier.
+   ```
+
+   Additional helpers (PCA variance, multiple-model curves) live in `plotting.metrics`.
+
+## Repository Layout
+
+```
+src/
+  probing/
+    analysis.py          # Baseline comparisons and difficulty-slice summaries
+    collection.py        # End-to-end generation + feature extraction loop
+    config.py            # Shared constants and seeding helper
+    data.py              # Hendrycks MATH parsing and normalisation
+    features.py          # Prefix hidden-state harvesting and leakage checks
+    generation.py        # Prompt builders and greedy CoT decoding
+    labels.py            # Gold-vs-prediction correctness checks
+    probes.py            # PCA + logistic regression probes
+  plotting/
+    metrics.py           # Matplotlib styling for probe diagnostics
+scripts/
+  prepare_math.py        # Optional JSONL dump of MATH subsets
+  plot_*.py              # Standalone figure scripts for cached results
+results/                 # Probe metrics and metadata (JSON, PNG)
+runs/                    # Raw per-example generation logs (JSONL)
+figs/                    # Published figures
+requirements.txt         # Python dependencies
+```
+
+## Handy Commands
+
+- Dump MATH splits to JSONL (offline reuse):
+  ```bash
+  PYTHONPATH=src python scripts/prepare_math.py --out-train data/math_train.jsonl
+  ```
+- Plot cached PCA ellipses:
+  ```bash
+  PYTHONPATH=src python scripts/plot_pca_prefix_ellipses.py \
+    --input results/qwen/Qwen__Qwen3-8B_probe_details.json \
+    --output figs/qwen/Qwen__Qwen3-8B_pca_prefix_ellipses.png
+  ```
+- Regenerate the difficulty histogram for Qwen:
+  ```bash
+  PYTHONPATH=src python scripts/plot_qwen_difficulty_hist.py \
+    --input runs/Qwen__Qwen3-8B_examples.jsonl
+  ```
+
+## Notes
+
+- The packages rely on PyTorch, scikit-learn, Hugging Face Transformers, and `datasets`.
+- GPU inference is assumed; adjust `probing.config.DEVICE` or pass `device_map` overrides when loading models.
+- Prefix leakage checks flag prefixes that already contain the boxed final answer or close the `<think>` block early.

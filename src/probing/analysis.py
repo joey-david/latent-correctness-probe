@@ -7,7 +7,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 
-from probes import run_probes_from_meta
+from .probes import run_probes_from_meta
 
 
 def _to_serialisable(metrics: Optional[Dict[str, float]]) -> Optional[Dict[str, float]]:
@@ -184,6 +184,8 @@ def analyze_baselines(
         labels_t = y[mask]
         if len(np.unique(labels_t)) < 2:
             continue
+        pos_count = int(labels_t.sum())
+        neg_count = int(labels_t.shape[0] - pos_count)
 
         result_row: Dict[str, float] = {}
 
@@ -199,12 +201,55 @@ def analyze_baselines(
             auc_length = float(roc_auc_score(labels_t, length_probs[mask]))
             auc_curves["length"].append(auc_length)
             result_row["length_auc"] = auc_length
+        result_row["n_pos_total"] = pos_count
+        result_row["n_neg_total"] = neg_count
 
         hidden_stats = probe_results.get(t)
         if hidden_stats:
             hidden_auc = float(hidden_stats.get("auc", float("nan")))
             auc_curves["hidden_state"].append(hidden_auc)
             result_row["hidden_state_auc"] = hidden_auc
+            pos_key = "n_pos_test" if "n_pos_test" in hidden_stats else "n_pos_total"
+            neg_key = "n_neg_test" if "n_neg_test" in hidden_stats else "n_neg_total"
+            pos_value = hidden_stats.get(pos_key)
+            neg_value = hidden_stats.get(neg_key)
+
+            def _safe_float(value: Optional[float]) -> float:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return float("nan")
+
+            pos_float = _safe_float(pos_value)
+            neg_float = _safe_float(neg_value)
+
+            if (
+                np.isnan(pos_float)
+                or np.isnan(neg_float)
+                or pos_float <= 0.0
+                or neg_float <= 0.0
+            ):
+                n_test = _safe_float(hidden_stats.get("n_test"))
+                p_pos = _safe_float(hidden_stats.get("p_pos"))
+                if (
+                    not np.isnan(n_test)
+                    and n_test > 0.0
+                    and not np.isnan(p_pos)
+                    and p_pos >= 0.0
+                ):
+                    approx_pos = max(1.0, round(p_pos * n_test))
+                    approx_neg = max(1.0, n_test - approx_pos)
+                    if approx_neg <= 0.0:
+                        approx_neg = 1.0
+                        approx_pos = max(1.0, n_test - approx_neg)
+                    pos_float = float(approx_pos)
+                    neg_float = float(approx_neg)
+                else:
+                    pos_float = float("nan")
+                    neg_float = float("nan")
+
+            result_row["hidden_state_n_pos"] = pos_float
+            result_row["hidden_state_n_neg"] = neg_float
 
         per_t_results[t] = result_row
 
@@ -230,9 +275,23 @@ def analyze_baselines(
         "entropy": series_for("entropy"),
         "length": series_for("length"),
     }
+    support_payload = {
+        "hidden_state": {
+            "n_pos": [per_t_results.get(t, {}).get("hidden_state_n_pos", float("nan")) for t in steps],
+            "n_neg": [per_t_results.get(t, {}).get("hidden_state_n_neg", float("nan")) for t in steps],
+        },
+        "entropy": {
+            "n_pos": [per_t_results.get(t, {}).get("n_pos_total", float("nan")) for t in steps],
+            "n_neg": [per_t_results.get(t, {}).get("n_neg_total", float("nan")) for t in steps],
+        },
+        "length": {
+            "n_pos": [per_t_results.get(t, {}).get("n_pos_total", float("nan")) for t in steps],
+            "n_neg": [per_t_results.get(t, {}).get("n_neg_total", float("nan")) for t in steps],
+        },
+    }
 
     try:
-        plot_fn(steps, plot_payload, "Probe vs baselines", fig_path)
+        plot_fn(steps, plot_payload, "Probe vs baselines", fig_path, support_payload)
     except Exception as exc:  # pragma: no cover
         if log_fn:
             log_fn(f"Baseline comparison plot failed: {exc!r}")

@@ -1,10 +1,8 @@
-from typing import Any, Dict
-
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from core_deps import MAX_NEW_TOKENS
-from data import parse_model_answer
+from .config import MAX_NEW_TOKENS
+from .data import parse_model_answer
 
 
 FORCED_SUFFIX = "\nThus the final numeric answer is \\boxed{"

@@ -148,6 +148,12 @@ def train_eval_probe(
         auc = roc_auc_score(y_test, y_prob)
     except ValueError:
         auc = float("nan")
+    total_pos = int(labels.sum())
+    total_neg = int(len(labels) - total_pos)
+    train_pos = int(y_train.sum())
+    train_neg = int(len(y_train) - train_pos)
+    test_pos = int(y_test.sum())
+    test_neg = int(len(y_test) - test_pos)
 
     metrics = {
         "acc": acc,
@@ -155,6 +161,12 @@ def train_eval_probe(
         "n_train": len(y_train),
         "n_test": len(y_test),
         "p_pos": float(np.mean(labels)),
+        "n_pos_total": total_pos,
+        "n_neg_total": total_neg,
+        "n_pos_train": train_pos,
+        "n_neg_train": train_neg,
+        "n_pos_test": test_pos,
+        "n_neg_test": test_neg,
     }
     if not capture_details:
         return metrics

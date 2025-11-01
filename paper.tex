@@ -201,6 +201,25 @@ Future work should replicate the pipeline across model sizes, modalities, and re
 \label{sec:conclusion}
 Linear probes applied to early chain-of-thought prefixes reveal that reasoning models internalise solution quality far earlier than their explicit answers.  By combining difficulty-balanced sampling, leakage checks, and carry-forward diagnostics, we show that this signal is both strong and robust.  These findings motivate adaptive inference policies and deeper interpretability studies that treat early hidden states as actionable indicators of success.
 
+\appendix
+\section{Run Diagnostics}
+\label{sec:appendix-runs}
+To complement the main text, \cref{tab:run-diagnostics} summarises run-level properties extracted from the cached JSONL logs under \texttt{runs/}.  The figures highlight how Qwen3-8B's structured reasoning mode yields almost universal forced completions with long leak-free prefixes, whereas Llama~3.1 finishes far earlier and exposes fewer safe checkpoints for late-prefix probes.
+
+\begin{table*}[t]
+  \centering
+  \caption{Additional run diagnostics not covered in the main text.  ``Max leak-free prefix'' reports the median and interquartile range of the largest prefix that passes the leakage filter.  ``Answer length'' lists the median token length with the interquartile range, followed by the median length for correct / incorrect completions.}
+  \label{tab:run-diagnostics}
+  \begin{tabular}{lccccc}
+    \toprule
+    Model & Forced completions (\%) & Max leak-free prefix (tokens) & Leak-free coverage at $t$ (\%) & Answer length (tokens) & Median entropy at $t{=}4$ \\
+    \midrule
+    Qwen3-8B & 99.9 & $384\,[128,512]$ & \shortstack{256: $68.5$\\384: $52.3$\\512: $37.6$} & \shortstack{$527\,[526,555]$\\$(527 / 529)$} & $0.53$ \\
+    Llama~3.1-8B & 28.3 & $192\,[64,256]$ & \shortstack{256: $41.9$\\384: $24.5$\\512: $17.3$} & \shortstack{$324\,[220,525]$\\$(282 / 525)$} & $5.0\times10^{-4}$ \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
 % ---------- References ----------
 \vspace{-2mm}
 \begingroup

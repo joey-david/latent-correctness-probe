@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional
 
-from data import gold_answer_str, normalize_num_str
+from .data import gold_answer_str, normalize_num_str
 
 
 def compute_correct_label(example_gsm: Dict[str, Any], model_ans_norm: Optional[str]) -> int:

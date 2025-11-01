@@ -3,60 +3,100 @@
     "entropy_auc": 0.5369886029822226,
     "entropy_plus_length_auc": 0.5371478354451462,
     "length_auc": 0.4885901704153405,
-    "hidden_state_auc": 0.8643657142857144
+    "hidden_state_auc": 0.8643657142857144,
+    "n_pos_total": 877.0,
+    "n_neg_total": 623.0,
+    "hidden_state_n_pos": 175.0,
+    "hidden_state_n_neg": 125.0
   },
   "8": {
     "entropy_auc": 0.5792318772409224,
     "entropy_plus_length_auc": 0.5846860466606024,
     "length_auc": 0.5035937119649468,
-    "hidden_state_auc": 0.8245942857142856
+    "hidden_state_auc": 0.8245942857142856,
+    "n_pos_total": 877.0,
+    "n_neg_total": 623.0,
+    "hidden_state_n_pos": 175.0,
+    "hidden_state_n_neg": 125.0
   },
   "16": {
     "entropy_auc": 0.5271355910427231,
     "entropy_plus_length_auc": 0.5117237392020677,
     "length_auc": 0.5005885487125615,
-    "hidden_state_auc": 0.8389022040509423
+    "hidden_state_auc": 0.8389022040509423,
+    "n_pos_total": 862.0,
+    "n_neg_total": 614.0,
+    "hidden_state_n_pos": 173.0,
+    "hidden_state_n_neg": 123.0
   },
   "32": {
     "entropy_auc": 0.48301752479160676,
     "entropy_plus_length_auc": 0.48264587525150904,
     "length_auc": 0.5039399342483473,
-    "hidden_state_auc": 0.8429433456252097
+    "hidden_state_auc": 0.8429433456252097,
+    "n_pos_total": 784.0,
+    "n_neg_total": 568.0,
+    "hidden_state_n_pos": 157.0,
+    "hidden_state_n_neg": 114.0
   },
   "64": {
     "entropy_auc": 0.5145317615226529,
     "entropy_plus_length_auc": 0.5141677252119673,
     "length_auc": 0.4974788549121666,
-    "hidden_state_auc": 0.810144553433144
+    "hidden_state_auc": 0.810144553433144,
+    "n_pos_total": 742.0,
+    "n_neg_total": 522.0,
+    "hidden_state_n_pos": 149.0,
+    "hidden_state_n_neg": 104.0
   },
   "128": {
     "entropy_auc": 0.5287369611016906,
     "entropy_plus_length_auc": 0.527345288868335,
     "length_auc": 0.48612752570668405,
-    "hidden_state_auc": 0.8729078014184397
+    "hidden_state_auc": 0.8729078014184397,
+    "n_pos_total": 702.0,
+    "n_neg_total": 499.0,
+    "hidden_state_n_pos": 141.0,
+    "hidden_state_n_neg": 100.0
   },
   "192": {
     "entropy_auc": 0.5250738770685579,
     "entropy_plus_length_auc": 0.5387641187286577,
     "length_auc": 0.5328572366692934,
-    "hidden_state_auc": 0.7892798690671031
+    "hidden_state_auc": 0.7892798690671031,
+    "n_pos_total": 648.0,
+    "n_neg_total": 470.0,
+    "hidden_state_n_pos": 130.0,
+    "hidden_state_n_neg": 94.0
   },
   "256": {
     "entropy_auc": 0.5483716585557119,
     "entropy_plus_length_auc": 0.5467821420608744,
     "length_auc": 0.4867399343435508,
-    "hidden_state_auc": 0.8345914954610606
+    "hidden_state_auc": 0.8345914954610606,
+    "n_pos_total": 573.0,
+    "n_neg_total": 454.0,
+    "hidden_state_n_pos": 115.0,
+    "hidden_state_n_neg": 91.0
   },
   "384": {
     "entropy_auc": 0.5658594134032443,
     "entropy_plus_length_auc": 0.5642012125184336,
     "length_auc": 0.4951204325741439,
-    "hidden_state_auc": 0.7812091503267974
+    "hidden_state_auc": 0.7812091503267974,
+    "n_pos_total": 359.0,
+    "n_neg_total": 425.0,
+    "hidden_state_n_pos": 72.0,
+    "hidden_state_n_neg": 85.0
   },
   "512": {
     "entropy_auc": 0.5453150323422687,
     "entropy_plus_length_auc": 0.4965362936190353,
     "length_auc": 0.4640649427018344,
-    "hidden_state_auc": 0.6610953058321479
+    "hidden_state_auc": 0.6610953058321479,
+    "n_pos_total": 183.0,
+    "n_neg_total": 381.0,
+    "hidden_state_n_pos": 37.0,
+    "hidden_state_n_neg": 76.0
   }
 }

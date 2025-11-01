@@ -1,9 +1,9 @@
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from core_deps import CHECKPOINT_STEPS, MAX_PREFIX_TOKENS
-from features import get_prefix_hidden_states
-from gen import generate_cot
-from labels import compute_correct_label
+from .config import CHECKPOINT_STEPS, MAX_PREFIX_TOKENS
+from .features import get_prefix_hidden_states
+from .generation import generate_cot
+from .labels import compute_correct_label
 
 
 def build_probe_data(
