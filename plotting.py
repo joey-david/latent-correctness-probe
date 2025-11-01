@@ -58,21 +58,75 @@ def plot_probe_results(results_dict: Dict[int, Dict[str, float]], title: str, ou
     if not results_dict:
         return
 
+    _configure_fonts()
+
     steps = sorted(results_dict.keys())
     aucs = [results_dict[t]["auc"] for t in steps]
     accs = [results_dict[t]["acc"] for t in steps]
 
-    plt.figure()
-    plt.plot(steps, aucs, marker="o", label="ROC-AUC")
-    plt.plot(steps, accs, marker="s", label="Accuracy")
-    plt.xlabel("Reasoning prefix length (tokens)")
-    plt.ylabel("Score")
-    plt.title(title)
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(outpath)
-    plt.close()
+    colors = {
+        "auc": plt.colormaps["Purples"](0.7),
+        "acc": plt.colormaps["Greens"](0.75),
+    }
+    styles = {
+        "auc": {"label": "ROC-AUC", "linestyle": "-", "marker": "o"},
+        "acc": {"label": "Accuracy", "linestyle": "--", "marker": "s"},
+    }
+
+    fig, ax = plt.subplots(figsize=(8.5, 5.2))
+    ax.plot(
+        steps,
+        aucs,
+        label=styles["auc"]["label"],
+        linestyle=styles["auc"]["linestyle"],
+        marker=styles["auc"]["marker"],
+        color=colors["auc"],
+        linewidth=2.0,
+        markersize=6,
+    )
+    ax.plot(
+        steps,
+        accs,
+        label=styles["acc"]["label"],
+        linestyle=styles["acc"]["linestyle"],
+        marker=styles["acc"]["marker"],
+        color=colors["acc"],
+        linewidth=2.0,
+        markersize=6,
+    )
+
+    ax.set_xlabel("Reasoning prefix length (tokens)", fontsize=LABEL_SIZE, color=STYLE_COLOR)
+    ax.set_ylabel("Score", fontsize=LABEL_SIZE, color=STYLE_COLOR)
+    ax.set_title(title, fontsize=TITLE_SIZE, color=STYLE_COLOR, pad=10)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xticks(steps)
+    ax.tick_params(axis="x", colors=STYLE_COLOR, labelsize=TICK_SIZE)
+    ax.tick_params(axis="y", colors=STYLE_COLOR, labelsize=TICK_SIZE)
+    ax.margins(x=0)
+
+    ax.axhline(
+        0.5,
+        color="#535353",
+        linestyle=(0, (1, 3)),
+        linewidth=1.0,
+        zorder=0.5,
+    )
+
+    ax.grid(axis="y", linestyle="--", linewidth=0.6, alpha=0.3, color=STYLE_COLOR)
+
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color(STYLE_COLOR)
+    ax.spines["bottom"].set_color(STYLE_COLOR)
+
+    legend = ax.legend(loc="lower right", fontsize=LEGEND_SIZE, frameon=False)
+    if legend:
+        for text in legend.get_texts():
+            text.set_color(STYLE_COLOR)
+
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=300)
+    plt.close(fig)
 
 
 def plot_multiple_probe_results(
@@ -106,44 +160,6 @@ def plot_multiple_probe_results(
     ax_acc.set_xlabel("Reasoning prefix length (tokens)")
     ax_acc.set_ylabel("Accuracy")
     ax_acc.grid(True)
-
-    plt.tight_layout()
-    plt.savefig(outpath)
-    plt.close()
-
-
-def plot_carryforward_curves(
-    raw_results: Dict[int, Dict[str, float]],
-    carry_data: Dict[str, List[float]],
-    title: str,
-    outpath: str,
-) -> None:
-    if not raw_results or not carry_data:
-        return
-
-    steps = carry_data["steps"]
-    raw_auc = carry_data["raw_auc"]
-    raw_acc = carry_data["raw_acc"]
-    carry_auc = carry_data["carry_auc"]
-    carry_acc = carry_data["carry_acc"]
-
-    plt.figure(figsize=(7, 6))
-    ax_auc = plt.subplot(2, 1, 1)
-    ax_acc = plt.subplot(2, 1, 2, sharex=ax_auc)
-
-    ax_auc.plot(steps, raw_auc, marker="o", linestyle="-", label="Raw ROC-AUC")
-    ax_auc.plot(steps, carry_auc, marker="o", linestyle="--", label="Carry-forward ROC-AUC")
-    ax_auc.set_ylabel("ROC-AUC")
-    ax_auc.set_title(title)
-    ax_auc.grid(True)
-    ax_auc.legend(loc="best")
-
-    ax_acc.plot(steps, raw_acc, marker="s", linestyle="-", label="Raw Accuracy")
-    ax_acc.plot(steps, carry_acc, marker="s", linestyle="--", label="Carry-forward Accuracy")
-    ax_acc.set_xlabel("Reasoning prefix length (tokens)")
-    ax_acc.set_ylabel("Accuracy")
-    ax_acc.grid(True)
-    ax_acc.legend(loc="best")
 
     plt.tight_layout()
     plt.savefig(outpath)

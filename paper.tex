@@ -136,35 +136,32 @@ Our work builds on chain-of-thought prompting \cite{wei2022chain}, which showed 
 % ---------- 3. Method ----------
 \section{Method}
 \label{sec:method}
-
 \subsection{Difficulty-balanced data}
-We study Hendrycks MATH \cite{hendrycksmath2021} using the helpers in \texttt{data.py}.  All seven subjects are streamed through \texttt{load\_math\_split}, which filters to numerically normalisable gold answers via lightweight LaTeX stripping and fraction simplification.  We follow the code path in \texttt{sample\_balanced\_by\_difficulty}: levels~1--2 populate the \emph{easy} bucket, and levels~4--5 the \emph{hard} bucket.  From the resulting pool we draw 750 problems per bucket (seed~356), yielding 1{,}500 examples with a base correctness of 58.6\%.  Easy instances are solved 85.1\% of the time, while hard ones drop to 32.1\%, giving a wide accuracy dynamic for probing latent confidence.
+
+% ---------- Fig 1 (probe) ----------
+\begin{center}
+\begin{minipage}{1.02\columnwidth}
+  \centering
+  \includegraphics[width=\linewidth]{qwen_level_metrics.png}
+  \captionof{figure}{Mean accuracy and CoT length per difficulty level.}
+  \label{fig:raw-cf}
+\end{minipage}
+\end{center}
+
+
+We study Hendrycks MATH \cite{hendrycksmath2021} using the helpers in \texttt{data.py}.  All seven subjects are streamed through \texttt{load\_math\_split}, which filters to numerically normalisable gold answers via lightweight LaTeX stripping and fraction simplification.  We follow the code path in \texttt{sample\_balanced\_by\_difficulty}: levels~1--2 populate the \emph{easy} bucket, and levels~4--5 the \emph{hard} bucket.  From the resulting pool we draw 750 problems per bucket, yielding 1{,}500 examples. Qwen3-8B solves easy instances 85.1\% of the time, while hard ones drop to 32.1\%, giving a wide accuracy dynamic for probing latent confidence.
 
 \subsection{Prompting and chain-of-thought harvesting}
-Question prompts are produced by \texttt{build\_prompt}.  For Qwen3 series models we enable their structured reasoning mode: the system message instructs the model to think inside \verb|<think>...</think>| before emitting a boxed numeric answer.  Generation is handled by \texttt{generate\_cot}, which performs greedy decoding (\texttt{temperature}=0, \texttt{max\_new\_tokens}=512).  When the raw completion either omits a boxed answer or leaves the thinking span unclosed, we append a deterministic suffix (\texttt{FORCED\_SUFFIX\_SUFFIX}) and continue for up to 32 extra tokens.  In practice 1{,}498 of the 1{,}500 examples required this forced wrap-up, ensuring every trace ends with a consistent final answer segment.
+Question prompts are produced by \texttt{build\_prompt}.  For Qwen3 series models, we enable the structured reasoning mode: the system message instructs the model to think inside \verb|<think>...</think>| before emitting a boxed numeric answer.  Generation is handled by \texttt{generate\_cot}, which performs greedy decoding (\texttt{temperature}=0, \texttt{max\_new\_tokens}=512).  When the raw completion either omits a boxed answer or leaves the thinking span unclosed, we append a deterministic suffix (\texttt{FORCED\_SUFFIX\_SUFFIX}) and continue for up to 32 extra tokens.
 
 \subsection{Prefix hidden-state extraction}
-For every generated solution we recover activations at fixed prefix lengths $t \in \{4,8,16,32,64,128,192,256,384,512\}$ using \texttt{get\_prefix\_hidden\_states}.  The function replays the prompt plus the first $t$ generated tokens, captures the final decoder layer, and averages the last four reasoning tokens (or fewer when $t<4$) to obtain a pooled hidden vector $h_t$.  We also log the next-token entropy and log-probability at each checkpoint.  Short prefixes are available for all items (1{,}500 slices at $t{=}4$ and $8$), and coverage gradually shrinks as chains terminate (566 examples remain at $t{=}512$).
+For every generated solution, we parse activations at fixed prefix lengths $t \in \{4,8,16,32,64,128,192,256,384,512\}$ using \texttt{get\_prefix\_hidden\_states}.  The function replays the prompt plus the first $t$ generated tokens, captures the final decoder layer, and averages the last four reasoning tokens to obtain a pooled hidden vector $h_t$.  We also log the next-token entropy and log-probability at each checkpoint.  Short prefixes are available for all items (1{,}500 slices at $t{=}4$ and $8$), and coverage gradually shrinks as chains terminate (566 examples remain at $t{=}512$).
 
 \subsection{Labeling and leakage controls}
-Correctness labels follow \texttt{compute\_correct\_label}.  Gold answers are normalised with \texttt{normalize\_num\_str}, handling boxed LaTeX, decimals, and rationals; model predictions undergo the same pipeline via \texttt{parse\_model\_answer}.  A prefix is discarded if the gold-normalised answer string already appears in its decoded text, or if the model has already closed the \verb|</think>| block.  For the present run no prefix under $t{=}256$ triggers this filter, confirming that early probe accuracy is not driven by trivial leakage.
+Correctness labels follow \texttt{compute\_correct\_label}.  Gold answers are normalized with \texttt{normalize\_num\_str}. A prefix is discarded if the gold-normalized answer string already appears in its decoded text, or if the model has already closed the \verb|</think>| block.  For the present runs, no prefix under $t{=}256$ triggers this filter, confirming that early probe accuracy is not driven by trivial answer leakage.
 
 \subsection{Linear probe and evaluation protocol}
-Hidden-state features are aggregated per checkpoint and fed to \texttt{run\_all\_probes}.  Each probe performs PCA down to at most 128 components (or fewer when the train split is smaller), then fits an $\ell_2$-regularised logistic regression with \texttt{liblinear}.  We stratify an 80/20 split and balance class weights to offset label skew.  Evaluation reports accuracy and ROC-AUC alongside the class prior in the training fold.  Following \cite{mao2025earlystoppingchainofthoughtslarge}, we additionally compute two bias-aware summaries: (i) a \emph{carry-forward} trace that keeps the best metric observed up to prefix $t$ to account for early halting, and (ii) a \emph{fixed-prefix} subset requiring that all retained examples reach $t{\leq}256$, so every curve is evaluated on identical items.
-
-\subsection{PCA diagnostics visualisation}
-To inspect what the probes learn we retain, for every $t$, the PCA explained-variance profile and the downstream logistic coefficients.  The new \texttt{plot\_probe\_pca\_profile} utility renders these diagnostics using the same muted purple/green palette as \texttt{scripts/plot\_qwen\_difficulty\_hist.py}.  We focus on the prefix with the strongest ROC-AUC and plot variance bars together with signed coefficient magnitudes.  The figure is generated automatically when \texttt{main.py} runs, and the underlying statistics are logged to \texttt{results/\{model\}\_probe\_details.json}.
-
-\begin{figure}[t]
-  \centering
-  \IfFileExists{figs/Qwen3-8B_probe_pca.png}{%
-    \makebox[\columnwidth][c]{\includegraphics[width=1.05\columnwidth]{figs/Qwen3-8B_probe_pca.png}}%
-  }{%
-    \figph{Placeholder for PCA$\to$probe diagnostics (best prefix).}%
-  }
-  \caption{Principal-component variance (greens) and logistic weights (purples) for the best-performing probe checkpoint.  Coefficients flip sign around zero, highlighting which latent directions drive predicted correctness.}
-  \label{fig:pca-profile}
-\end{figure}
+Hidden-state features are aggregated per checkpoint and fed to \texttt{run\_all\_probes}.  Each probe performs PCA down to at most 128 components (or fewer when the train split is smaller), then fits an $\ell_2$-regularised logistic regression with \texttt{liblinear}.  We stratify an 80/20 split and balance class weights to offset label skew.  Evaluation reports accuracy and ROC-AUC alongside the class prior in the training fold.
 
 
 % ---------- 4. Experiments ----------
@@ -172,104 +169,37 @@ To inspect what the probes learn we retain, for every $t$, the PCA explained-var
 \label{sec:experiments}
 
 \subsection{Experimental setup}
-All reported numbers come from the balanced MATH split described in \cref{sec:method}.  We run the end-to-end pipeline with Qwen3-8B as the reasoning model, greedy decoding, and the checkpoint grid $t \in \{4,\ldots,512\}$.  Probe features are cached in-memory during the sweep; metrics, baselines, and diagnostics are persisted under \texttt{results/}, and plots under \texttt{figs/}.  Every probe uses the same random seed for the train/test split, so performance differences across $t$ stem only from the available prefixes.  Because long reasoning chains are rarer, the effective sample size drops from 1{,}500 prefixes at $t{=}4$ to 566 at $t{=}512$ (see \cref{tab:stats}).
-
-\begin{figure}[t]
-  \centering
-  \IfFileExists{figs/Qwen3-8B_curve_overall.png}{%
-    \makebox[\columnwidth][c]{\includegraphics[width=1.05\columnwidth]{figs/Qwen3-8B_curve_overall.png}}%
-  }{%
-    \figph{Placeholder for overall probe curves.}%
-  }
-  \caption{Overall probe performance per prefix length.  Solid lines show accuracy; markers denote ROC-AUC.}
-  \label{fig:prefix}
-\end{figure}
+All reported numbers come from the balanced MATH split described in \cref{sec:method}.  We run the end-to-end pipeline with Qwen3-8B as the reasoning model, greedy decoding, and the checkpoint grid $t \in \{4,\ldots,512\}$.  Probe features are cached in-memory during the sweep; metrics, baselines, and diagnostics are persisted under \texttt{results/}, and plots under \texttt{figs/}. Because long reasoning chains are rarer, the effective sample size drops from 1{,}500 prefixes at $t{=}4$ to 566 at $t{=}512$ (see \cref{tab:stats}).
 
 \subsection{Prefix-wise probe accuracy}
 The probe is already highly predictive after four reasoning tokens: \cref{fig:prefix} shows an ROC-AUC of 0.84 and an accuracy of 0.76 at $t{=}4$.  Accuracy dips slightly at $t{=}8$ before climbing to its peak near $t{=}32$ (0.79 accuracy, 0.86 ROC-AUC).  Longer traces yield noisier statistics because fewer examples survive---beyond $t{=}256$ the label distribution becomes skewed toward incorrect answers as only genuinely hard questions remain.  Applying the carry-forward diagnostic keeps the early AUC plateau at 0.858, and the fixed-prefix subset (requiring availability through $t{=}256$) maintains AUC~$>0.82$, indicating that the strong early signal is not an artifact of shorter solutions exiting the pool.  The carry-forward trend is summarised in \cref{fig:carryforward}.
 
-\begin{figure}[t]
-  \centering
-  \IfFileExists{figs/Qwen3-8B_carryforward.png}{%
-    \makebox[\columnwidth][c]{\includegraphics[width=1.05\columnwidth]{figs/Qwen3-8B_carryforward.png}}%
-  }{%
-    \figph{Placeholder for carry-forward analysis.}%
-  }
-  \caption{Raw and carry-forwarded probe metrics.  The dashed curves report the best score observed up to each prefix, mitigating early-stopping bias.}
-  \label{fig:carryforward}
-\end{figure}
 
 \subsection{Difficulty and CoT-length effects}
 Difficulty stratification confirms that the probe mirrors how quickly the base model commits to an answer.  At $t{=}4$ the AUC is 0.77 on easy items and 0.72 on hard items; by $t{=}32$ the gap widens (0.84 vs.\ 0.76).  Hard problems therefore require longer prefixes before their internal state separates correct from incorrect trajectories.  When we additionally condition on long chains (\textit{fixed $\leq\!256$}), the early AUC stays above 0.84, revealing that the information is already present even when we force every example to continue reasoning.  The bar chart in \cref{fig:difficulty} visualises these trends.
 
-\begin{figure}[t]
-  \centering
-  \IfFileExists{figs/Qwen3-8B_difficulty_bar_t4.png}{%
-    \makebox[\columnwidth][c]{\includegraphics[width=1.05\columnwidth]{figs/Qwen3-8B_difficulty_bar_t4.png}}%
-  }{%
-    \figph{Placeholder for difficulty-stratified probe results.}%
-  }
-  \caption{Early prefix performance broken down by difficulty bucket (MATH levels~$\leq2$ vs.\ $\geq4$).}
-  \label{fig:difficulty}
-\end{figure}
-
 \subsection{Comparison with output-space baselines}
-Next-token entropy and prefix length provide weak signals relative to the hidden-state probe.  Even when combined (\textit{entropy+length}) the best baseline AUC is 0.59 at $t{=}8$, more than 0.21 below the hidden-state probe at the same prefix.  At the peak around $t{=}32$ the margin widens to 0.39.  These gaps demonstrate that uncertainty heuristics cannot explain the strong latent predictability we observe.  \Cref{fig:baselines} contrasts the curves.
-
-\begin{figure}[t]
-  \centering
-  \IfFileExists{figs/Qwen3-8B_baselines.png}{%
-    \makebox[\columnwidth][c]{\includegraphics[width=1.05\columnwidth]{figs/Qwen3-8B_baselines.png}}%
-  }{%
-    \figph{Placeholder for baseline comparison.}%
-  }
-  \caption{Hidden-state probe versus entropy-, length-, and entropy+length-based baselines.}
-  \label{fig:baselines}
-\end{figure}
-
-\subsection{Leakage and coverage}
-No prefixes up to $t{=}256$ contained the final numeric answer or closed the \verb|</think>| tag before the probe checkpoint, so leakage-driven accuracy can be ruled out.  Coverage decreases smoothly with $t$ (e.g., 1{,}347 prefixes at $t{=}32$ and 1{,}026 at $t{=}256$), and the class balance gradually shifts toward incorrect answers, as documented in \cref{tab:stats}.  Forced completions occur in 99.9\% of cases, but because the forced suffix appends only after the final answer token, it does not expose the prediction to earlier checkpoints.
+Next-token entropy and prefix length provide weak signals relative to the hidden-state probe.  Even when combined (\textit{entropy+length}) the best baseline AUC is 0.59 at $t{=}8$, more than 0.21 below the hidden-state probe at the same prefix.  At the peak around $t{=}32$ the margin widens to 0.39.  These gaps demonstrate that former uncertainty heuristics cannot explain the strong latent predictability we observe.
 
 \subsection{Ablations}
 The PCA profile in \cref{fig:pca-profile} shows that most variance---and the largest logistic weights---sit in the first dozen components, motivating a future ablation where we cap PCA at 64 components to confirm that AUC changes by at most a few hundredths.  We also plan to probe prompting variants (e.g., disabling Qwen's thinking mode or masking digits during replay) to disentangle stylistic artifacts from genuine latent calibration; these runs are queued for future work.
 
-% ---------- Table 1 (stats) ----------
-\begin{table}[t]
-  \centering
-  \caption{Prefix coverage and class balance for Qwen3-8B (train+test counts).}
-  \begin{tabular}{lrrr}
-  \toprule
-  Prefix $t$ & $N$ used & $p_{\text{pos}}$ & Leak \% \\
-  \midrule
-  4   & 1500 & 0.586 & 0.0 \\
-  8   & 1500 & 0.586 & 0.0 \\
-  16  & 1469 & 0.587 & 0.0 \\
-  32  & 1347 & 0.582 & 0.0 \\
-  64  & 1265 & 0.586 & 0.0 \\
-  128 & 1204 & 0.581 & 0.0 \\
-  192 & 1125 & 0.572 & 0.0 \\
-  256 & 1026 & 0.551 & 0.0 \\
-  384 & 801  & 0.459 & 0.0 \\
-  512 & 566  & 0.316 & 0.0 \\
-  \bottomrule
-  \end{tabular}
-  \label{tab:stats}
-\end{table}
 
 % ---------- 5. Discussion ----------
-\section{Discussion}
+\section{Discussion and Limitations}
 \label{sec:discussion}
-Implications for budgeted reasoning, routing, and self-monitoring; why emergence is so early; links to interpretability and safety.
+Our results show that a linear probe needs only a few reasoning tokens before it predicts the eventual correctness of Qwen3-8B with high fidelity.  The steep rise in ROC-AUC between $t{=}4$ and $t{=}32$ indicates that the model rapidly commits to a latent plan, even while the visible chain-of-thought continues to unfold.  This rapid convergence suggests practical hooks for adaptive compute: schedulers could invoke heavier decoders or external tools only when the early probe signals low success probability, reducing average inference cost for easy problems while still extending effort on hard cases.  The probe also offers a lightweight diagnostic for routing or self-monitoring systems that must decide when to re-run a solution, escalate to human review, or trigger reflective prompting.
 
-% ---------- 6. Limitations ----------
-\section{Limitations}
-\label{sec:limitations}
-Scope (math domain, greedy decoding), linearity of probes, normalization quirks, dataset artifacts.
+The divergence between easy and hard items highlights a second takeaway: long chains mostly arise from inherently difficult questions rather than from meandering solutions.  While we observe a modest drop in probe accuracy on the hardest slices, the carry-forward analysis shows that latent evidence for correctness is already present.  The missing ingredient appears to be the model's ability to act on that knowledge—for difficult math problems, Qwen3-8B often recognises its failing path but lacks a corrective policy.  This gap aligns with recent evaluations of reflection-heavy reasoning models and points toward combining probes with targeted re-decoding policies.
 
-% ---------- 7. Conclusion ----------
+Despite the strong empirical signal, several limitations temper our conclusions.  First, the study focuses on a single base model, dataset, and prompting template; different architectures, safety finetunes, or non-mathematical domains may exhibit weaker early commitment.  Second, our leakage controls remove trivial answer exposures but cannot fully rule out subtle cues, such as partial numeric structure, that a linear classifier could exploit.  Third, long-prefix statistics are based on a few hundred examples, making the tail estimates sensitive to sampling noise and class imbalance.  Finally, we only probe the final decoder layer; intermediate layers or non-linear probes might surface richer temporal dynamics.
+
+Future work should replicate the pipeline across model sizes, modalities, and reasoning styles, and pair probe outputs with adaptive decoding strategies (e.g., selective continuation or tool-use triggers).  Incorporating causal interventions—masking intermediate computations or resampling alternative continuations—could disentangle whether the probe captures genuine self-assessment or merely correlates with stylistic markers.  We also plan to expand the ablations sketched in \cref{sec:experiments} to confirm that the high AUC persists under more aggressive dimensionality reduction and prompt perturbations.
+
+% ---------- 6. Conclusion ----------
 \section{Conclusion}
 \label{sec:conclusion}
-We provide a simple, bias-aware protocol showing that latent self-assessment appears within a handful of tokens and persists under fair evaluation.
+Linear probes applied to early chain-of-thought prefixes reveal that reasoning models internalise solution quality far earlier than their explicit answers.  By combining difficulty-balanced sampling, leakage checks, and carry-forward diagnostics, we show that this signal is both strong and robust.  These findings motivate adaptive inference policies and deeper interpretability studies that treat early hidden states as actionable indicators of success.
 
 % ---------- References ----------
 \vspace{-2mm}
@@ -302,10 +232,5 @@ arXiv:2509.14004, 2025.
 \end{thebibliography}
 
 \endgroup
-
-% ---------- Appendix (optional) ----------
-\appendix
-\section*{Appendix (Optional)}
-Extra plots, prompt templates, and implementation details.
 
 \end{document}

@@ -19,50 +19,6 @@ def _to_serialisable(metrics: Optional[Dict[str, float]]) -> Optional[Dict[str, 
     }
 
 
-def compute_carryforward_curves(probe_results: Dict[int, Dict[str, float]]) -> Optional[Dict[str, List[float]]]:
-    if not probe_results:
-        return None
-    steps = sorted(probe_results.keys())
-    raw_auc: List[float] = [float(probe_results[t]["auc"]) for t in steps]
-    raw_acc: List[float] = [float(probe_results[t]["acc"]) for t in steps]
-    carry_auc: List[float] = []
-    carry_acc: List[float] = []
-    best_auc = float("-inf")
-    best_acc = float("-inf")
-    for auc, acc in zip(raw_auc, raw_acc):
-        best_auc = max(best_auc, auc)
-        best_acc = max(best_acc, acc)
-        carry_auc.append(best_auc)
-        carry_acc.append(best_acc)
-    return {
-        "steps": steps,
-        "raw_auc": raw_auc,
-        "raw_acc": raw_acc,
-        "carry_auc": carry_auc,
-        "carry_acc": carry_acc,
-    }
-
-
-def analyze_carryforward(
-    probe_results: Dict[int, Dict[str, float]],
-    fig_path: Path,
-    title: str,
-    plot_fn: Callable[[Dict[int, Dict[str, float]], Dict[str, List[float]], str, Path], None],
-    log_fn: Optional[Callable[[str], None]] = None,
-) -> Optional[Dict[str, List[float]]]:
-    carry_data = compute_carryforward_curves(probe_results)
-    if carry_data is None:
-        if log_fn:
-            log_fn("Carry-forward analysis skipped (no probe results).")
-        return None
-    try:
-        plot_fn(probe_results, carry_data, title, fig_path)
-    except Exception as exc:  # pragma: no cover - plotting issues shouldn't crash run
-        if log_fn:
-            log_fn(f"Carry-forward plotting failed: {exc!r}")
-    return carry_data
-
-
 def analyze_difficulty_buckets(
     per_example_meta: List[Dict],
     target_t: int,

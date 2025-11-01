@@ -80,7 +80,6 @@ Running `python main.py` will:
 6. Save plots in `figs/` such as:
    - `<model_tag>_curve_overall.png`
    - `<model_tag>_difficulty_curves.png`
-   - `<model_tag>_carryforward.png`
 
 `model_tag` is the model identifier with `/`, `@`, and `:` replaced by `__`. Each plot shows ROC-AUC and accuracy versus prefix length.
 
