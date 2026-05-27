@@ -1,3 +1,5 @@
+from typing import Any, Dict, Optional
+
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -93,6 +95,10 @@ def generate_cot(
     tokenizer: AutoTokenizer,
     question: str,
     max_new_tokens: int = MAX_NEW_TOKENS,
+    do_sample: bool = False,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    seed: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Runs greedy decoding to produce a full chain-of-thought completion.
@@ -101,14 +107,25 @@ def generate_cot(
     prompt = build_prompt(question, tokenizer)
 
     enc = tokenizer(prompt, return_tensors="pt").to(model.device)
+    if seed is not None:
+        torch.manual_seed(seed)
+
+    generation_kwargs: Dict[str, Any] = {
+        "max_new_tokens": max_new_tokens,
+        "do_sample": do_sample,
+        "pad_token_id": tokenizer.eos_token_id,
+        "eos_token_id": tokenizer.eos_token_id,
+    }
+    if temperature is not None:
+        generation_kwargs["temperature"] = temperature
+    elif not do_sample:
+        generation_kwargs["temperature"] = 0.0
+    if top_p is not None:
+        generation_kwargs["top_p"] = top_p
 
     out = model.generate(
         **enc,
-        max_new_tokens=max_new_tokens,
-        do_sample=False,
-        temperature=0.0,
-        pad_token_id=tokenizer.eos_token_id,
-        eos_token_id=tokenizer.eos_token_id,
+        **generation_kwargs,
     )
     out_ids = out[0]
 

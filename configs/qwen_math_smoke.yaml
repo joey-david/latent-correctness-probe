@@ -1,0 +1,67 @@
+model:
+  id: Qwen/Qwen3-8B
+  device_map: auto
+  torch_dtype: auto
+
+dataset:
+  name: EleutherAI/hendrycks_math
+  source_split: test
+  subjects: [algebra]
+  min_level: 1
+  require_numeric: true
+  split_manifest: artifacts/splits/math_problem_splits.json
+
+prompt:
+  id: math_boxed_v1
+  template: model_family_default
+
+rollouts:
+  per_problem: 2
+  max_problems: 8
+
+decoding:
+  max_new_tokens: 192
+  do_sample: true
+  temperature: 0.7
+  top_p: 0.95
+
+features:
+  prefix_checkpoints: [4, 8, 16, 32, 64]
+  selected_layers: [last]
+  pool_last_k_tokens: 4
+  max_prefix_tokens: 256
+
+splits:
+  train_fraction: 0.6
+  validation_fraction: 0.2
+  final_test_fraction: 0.2
+  seed: 356
+
+intervention:
+  policy: hidden_threshold_reassess
+  checkpoint: 32
+  threshold: 0.45
+  prompt: reassess
+  max_extra_tokens: 128
+  score_file: null
+
+routing:
+  difficulty_signal: level
+  low_confidence_threshold: 0.45
+  high_confidence_threshold: 0.8
+
+seeds: [356, 357, 358, 359]
+
+outputs:
+  root: artifacts/qwen_math_smoke
+  rollouts: artifacts/qwen_math_smoke/rollouts.jsonl
+  features: artifacts/qwen_math_smoke/features
+  probes: artifacts/qwen_math_smoke/probes
+  baselines: artifacts/qwen_math_smoke/baselines.json
+  interventions: artifacts/qwen_math_smoke/interventions.jsonl
+  figures: artifacts/qwen_math_smoke/figures
+  manifests: artifacts/qwen_math_smoke/manifests
+
+run:
+  dry_run: false
+  notes: Small local or lamgate debug config before full matched-rollout collection.

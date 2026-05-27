@@ -1,0 +1,62 @@
+model:
+  id: Qwen/Qwen3-8B
+  device_map: auto
+  torch_dtype: auto
+
+dataset:
+  name: EleutherAI/hendrycks_math
+  source_split: test
+  subjects: [algebra]
+  min_level: 1
+  require_numeric: true
+  split_manifest: artifacts/lamgate_smoke/splits.json
+
+prompt:
+  id: math_boxed_v1
+  template: model_family_default
+
+rollouts:
+  per_problem: 1
+  max_problems: 2
+
+decoding:
+  max_new_tokens: 96
+  do_sample: false
+  temperature: 0.0
+  top_p: 1.0
+
+features:
+  prefix_checkpoints: [4, 8, 16]
+  selected_layers: [last]
+  pool_last_k_tokens: 4
+  max_prefix_tokens: 128
+
+splits:
+  train_fraction: 0.6
+  validation_fraction: 0.2
+  final_test_fraction: 0.2
+  seed: 356
+
+intervention:
+  policy: none
+  checkpoint: 16
+  threshold: 0.5
+  prompt: reassess
+  max_extra_tokens: 64
+  score_file: null
+
+seeds: [356]
+
+outputs:
+  root: artifacts/lamgate_smoke
+  rollouts: artifacts/lamgate_smoke/rollouts.jsonl
+  features: artifacts/lamgate_smoke/features
+  probes: artifacts/lamgate_smoke/probes
+  baselines: artifacts/lamgate_smoke/baselines.json
+  interventions: artifacts/lamgate_smoke/interventions.jsonl
+  figures: artifacts/lamgate_smoke/figures
+  manifests: artifacts/lamgate_smoke/manifests
+
+run:
+  dry_run: false
+  notes: Run via ssh lamgate on the smallest GPU selected by the local lamgate GPU guide.

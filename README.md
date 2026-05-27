@@ -1,6 +1,8 @@
 # Latent Correctness Probe
 
-This repository packages the code used to study how early a reasoning model internally commits to a correct answer during chain-of-thought generation. The workflow is organised into two Python packages:
+This repository packages code for studying whether latent correctness signals in
+reasoning models are merely diagnostic or can be used for inference-time
+control. The workflow is organised into two Python packages:
 
 - `src/probing/`: data loading, prompting, hidden-state extraction, and probe training.
 - `src/plotting/`: Matplotlib helpers for visualising probe metrics and diagnostics.
@@ -17,6 +19,33 @@ export PYTHONPATH="$PWD/src:$PYTHONPATH"
 ```
 
 Setting `PYTHONPATH` (or running scripts with `PYTHONPATH=src`) makes the packages importable as `import probing` and `import plotting`.
+
+## Config-Driven CLI
+
+The experiment entrypoint is `main.py`. Every substantive command takes a
+versioned YAML config and writes a manifest with git state, host/GPU metadata,
+command line, config path, split manifest, and output artifact paths.
+
+```bash
+PYTHONPATH=src python3 main.py make-splits --config configs/qwen_math_smoke.yaml
+PYTHONPATH=src python3 main.py generation --config configs/qwen_math_smoke.yaml --split validation
+PYTHONPATH=src python3 main.py hidden-state-extraction --config configs/qwen_math_smoke.yaml
+PYTHONPATH=src python3 main.py probe-training --config configs/qwen_math_smoke.yaml
+PYTHONPATH=src python3 main.py baseline-evaluation --config configs/qwen_math_smoke.yaml
+PYTHONPATH=src python3 main.py intervention-run --config configs/qwen_math_smoke.yaml
+PYTHONPATH=src python3 main.py plotting --config configs/qwen_math_smoke.yaml
+```
+
+Use dry runs locally to validate paths and manifests without GPU dependencies:
+
+```bash
+PYTHONPATH=src python3 main.py generation --config configs/qwen_math_smoke.yaml --dry-run
+PYTHONPATH=src python3 main.py hidden-state-extraction --config configs/qwen_math_smoke.yaml --dry-run
+```
+
+GPU jobs should be launched through `ssh lamgate` with the smallest GPU that
+fits the job according to the local lamgate GPU-selection guide. The minimal
+full-pipeline smoke config is `configs/lamgate_gpu_smoke.yaml`.
 
 ## Typical Workflow
 
@@ -131,9 +160,15 @@ requirements.txt         # Python dependencies
   PYTHONPATH=src python scripts/plot_qwen_difficulty_hist.py \
     --input runs/Qwen__Qwen3-8B_examples.jsonl
   ```
+- Run CPU smoke tests:
+  ```bash
+  PYTHONPATH=src python3 -m unittest discover -s tests
+  ```
 
 ## Notes
 
 - The packages rely on PyTorch, scikit-learn, Hugging Face Transformers, and `datasets`.
 - GPU inference is assumed; adjust `probing.config.DEVICE` or pass `device_map` overrides when loading models.
 - Prefix leakage checks flag prefixes that already contain the boxed final answer or close the `<think>` block early.
+- Do not tune thresholds, steering coefficients, or prompt policies on the
+  final test split. Use train for fitting and validation for policy selection.

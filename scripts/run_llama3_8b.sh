@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-# Run the probe pipeline with Meta-Llama 3.1 8B and capture enhanced metadata.
-python main.py \
-  --model-id meta-llama/Llama-3.1-8B \
-  --total-examples 1500
+# Run the config-driven pipeline with Meta-Llama 3.1 8B after adapting a YAML
+# config's model.id. Keep full jobs on lamgate per plan.md.
+PYTHONPATH=src python3 main.py generation \
+  --config "${1:-configs/qwen_math_smoke.yaml}" \
+  --split validation

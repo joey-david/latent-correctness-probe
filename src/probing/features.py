@@ -1,7 +1,18 @@
 from typing import Any, Dict, List, Optional
 
-import torch
-import torch.nn.functional as F
+try:
+    import torch
+    import torch.nn.functional as F
+except ImportError:  # pragma: no cover - supports CPU-only smoke tests without torch
+    torch = None
+    F = None
+
+
+def _no_grad(func):
+    if torch is None:
+        return func
+    return torch.no_grad()(func)
+
 
 def contains_answer(prefix_text: str, answer_str: Optional[str]) -> bool:
     """
@@ -12,12 +23,12 @@ def contains_answer(prefix_text: str, answer_str: Optional[str]) -> bool:
     return answer_str in prefix_text
 
 
-@torch.no_grad()
+@_no_grad
 def get_prefix_hidden_states(
     model,
     tokenizer,
     prompt_text: str,
-    gen_token_ids: torch.Tensor,
+    gen_token_ids,
     checkpoints: List[int],
     max_prefix_tokens: int,
     leak_answer_str: Optional[str] = None,
@@ -27,6 +38,9 @@ def get_prefix_hidden_states(
     For each checkpoint length t, run the model forward on prompt + first t generated tokens
     and record the final hidden state vector. This is the feature we probe.
     """
+    if torch is None or F is None:
+        raise RuntimeError("Hidden-state extraction requires the optional 'torch' dependency.")
+
     results: Dict[int, Dict[str, Any]] = {}
 
     prompt_ids = tokenizer(

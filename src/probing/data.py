@@ -3,8 +3,6 @@ from fractions import Fraction
 import random
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-from datasets import load_dataset
-
 try:
     from tqdm.auto import tqdm
 except Exception:  # pragma: no cover - tqdm is an optional nicety
@@ -60,11 +58,21 @@ def extract_boxed(solution: str) -> Optional[str]:
     matches: List[str] = []
     for match in BOX_TRIGGER_RE.finditer(solution):
         start_idx = match.end()
-        close_idx = solution.find("}", start_idx)
-        if close_idx == -1:
-            content = solution[start_idx:].strip()
-        else:
+        depth = 1
+        close_idx = None
+        for idx in range(start_idx, len(solution)):
+            char = solution[idx]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    close_idx = idx
+                    break
+        if close_idx is not None:
             content = solution[start_idx:close_idx].strip()
+        else:
+            content = solution[start_idx:].strip()
         if content:
             matches.append(content)
     if not matches:
@@ -155,6 +163,14 @@ def load_math_split(
         require_numeric: drop examples whose simplified gold answer is non-numeric.
         show_progress: if True, render tqdm progress bars while iterating.
     """
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:  # pragma: no cover - exercised in minimal envs
+        raise RuntimeError(
+            "Loading MATH requires the optional 'datasets' dependency. "
+            "Install requirements.txt before running data-generation commands."
+        ) from exc
+
     if subjects is None:
         subjects = MATH_SUBJECTS
 

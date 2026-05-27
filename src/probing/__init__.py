@@ -1,52 +1,47 @@
-"""Core probing pipeline utilities."""
+"""Core probing pipeline utilities.
 
-from .analysis import analyze_baselines, analyze_difficulty_buckets
-from .collection import build_probe_data
-from .config import CHECKPOINT_STEPS, DEVICE, MAX_NEW_TOKENS, MAX_PREFIX_TOKENS, SEED
-from .data import (
-    MATH_SUBJECTS,
-    extract_boxed,
-    extract_last_number,
-    load_math_split,
-    normalize_gold_answer,
-    normalize_num_str,
-    parse_model_answer,
-)
-from .features import contains_answer, get_prefix_hidden_states
-from .generation import build_prompt, generate_cot
-from .labels import compute_correct_label
-from .probes import (
-    eligible_example_indices,
-    collect_features_for_indices,
-    run_probes_from_meta,
-    run_all_probes,
-    train_eval_probe,
-)
+The package initializer intentionally avoids importing GPU/scientific stacks.
+Import concrete submodules directly, for example ``from probing.data import ...``
+or ``from probing.probes import ...``.
+"""
 
-__all__ = [
-    "analyze_baselines",
-    "analyze_difficulty_buckets",
-    "build_probe_data",
-    "CHECKPOINT_STEPS",
-    "DEVICE",
-    "MAX_NEW_TOKENS",
-    "MAX_PREFIX_TOKENS",
-    "SEED",
-    "MATH_SUBJECTS",
-    "extract_boxed",
-    "extract_last_number",
-    "load_math_split",
-    "normalize_gold_answer",
-    "normalize_num_str",
-    "parse_model_answer",
-    "contains_answer",
-    "get_prefix_hidden_states",
-    "build_prompt",
-    "generate_cot",
-    "compute_correct_label",
-    "eligible_example_indices",
-    "collect_features_for_indices",
-    "run_probes_from_meta",
-    "run_all_probes",
-    "train_eval_probe",
-]
+_EXPORTS = {
+    "analyze_baselines": "analysis",
+    "analyze_difficulty_buckets": "analysis",
+    "build_probe_data": "collection",
+    "CHECKPOINT_STEPS": "config",
+    "DEVICE": "config",
+    "MAX_NEW_TOKENS": "config",
+    "MAX_PREFIX_TOKENS": "config",
+    "SEED": "config",
+    "MATH_SUBJECTS": "data",
+    "extract_boxed": "data",
+    "extract_last_number": "data",
+    "load_math_split": "data",
+    "normalize_gold_answer": "data",
+    "normalize_num_str": "data",
+    "parse_model_answer": "data",
+    "contains_answer": "features",
+    "get_prefix_hidden_states": "features",
+    "build_prompt": "generation",
+    "generate_cot": "generation",
+    "compute_correct_label": "labels",
+    "eligible_example_indices": "probes",
+    "collect_features_for_indices": "probes",
+    "run_probes_from_meta": "probes",
+    "run_all_probes": "probes",
+    "train_eval_probe": "probes",
+}
+
+__all__ = sorted(_EXPORTS)
+
+
+def __getattr__(name):
+    if name not in _EXPORTS:
+        raise AttributeError(name)
+    from importlib import import_module
+
+    module = import_module(f"{__name__}.{_EXPORTS[name]}")
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
